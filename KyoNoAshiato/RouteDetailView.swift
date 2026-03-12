@@ -66,7 +66,9 @@ struct RouteDetailView: View {
             }
             if let duration = route.duration {
                 infoItem(label: "所要時間", value: formatDuration(duration))
+                Divider().frame(height: 32)
             }
+            infoItem(label: "距離", value: formatDistance(route.totalDistance))
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
@@ -83,6 +85,14 @@ struct RouteDetailView: View {
                 .fontWeight(.medium)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private func formatDistance(_ meters: Double) -> String {
+        if meters >= 1000 {
+            return String(format: "%.1f km", meters / 1000)
+        } else {
+            return String(format: "%.0f m", meters)
+        }
     }
 
     private func formatDuration(_ duration: TimeInterval) -> String {

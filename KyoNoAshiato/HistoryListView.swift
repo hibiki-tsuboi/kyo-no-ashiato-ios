@@ -67,9 +67,25 @@ struct RouteRowView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
+                let distance = route.totalDistance
+                if distance > 0 {
+                    Text("·")
+                        .foregroundStyle(.secondary)
+                    Text(formatDistance(distance))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private func formatDistance(_ meters: Double) -> String {
+        if meters >= 1000 {
+            return String(format: "%.1f km", meters / 1000)
+        } else {
+            return String(format: "%.0f m", meters)
+        }
     }
 
     private func formatDuration(_ duration: TimeInterval) -> String {

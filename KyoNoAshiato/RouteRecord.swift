@@ -41,6 +41,16 @@ final class RouteRecord {
             .map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
     }
 
+    var totalDistance: CLLocationDistance {
+        let coords = coordinates
+        guard coords.count >= 2 else { return 0 }
+        return zip(coords, coords.dropFirst()).reduce(0) { sum, pair in
+            let from = CLLocation(latitude: pair.0.latitude, longitude: pair.0.longitude)
+            let to = CLLocation(latitude: pair.1.latitude, longitude: pair.1.longitude)
+            return sum + from.distance(from: to)
+        }
+    }
+
     var duration: TimeInterval? {
         guard let endDate else { return nil }
         return endDate.timeIntervalSince(startDate)
