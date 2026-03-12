@@ -66,9 +66,7 @@ struct RouteDetailView: View {
             }
             if let duration = route.duration {
                 infoItem(label: "所要時間", value: formatDuration(duration))
-                Divider().frame(height: 32)
             }
-            infoItem(label: "記録数", value: "\(route.points.count)")
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)

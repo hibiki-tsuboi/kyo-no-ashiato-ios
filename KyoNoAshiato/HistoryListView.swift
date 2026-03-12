@@ -53,9 +53,16 @@ struct RouteRowView: View {
             Text(route.title)
                 .font(.headline)
             HStack(spacing: 6) {
-                Text(route.startDate, style: .date)
+                Text(route.startDate, style: .time)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                if let endDate = route.endDate {
+                    Text("-")
+                        .foregroundStyle(.secondary)
+                    Text(endDate, style: .time)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
                 if let duration = route.duration {
                     Text("·")
                         .foregroundStyle(.secondary)
@@ -64,9 +71,6 @@ struct RouteRowView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            Text("\(route.points.count)ポイント記録")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
         }
         .padding(.vertical, 4)
     }
