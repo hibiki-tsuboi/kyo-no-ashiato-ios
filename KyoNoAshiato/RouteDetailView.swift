@@ -11,10 +11,23 @@ import MapKit
 struct RouteDetailView: View {
     let route: RouteRecord
     @State private var position: MapCameraPosition = .automatic
+    @State private var sliderValue: Double = 0
+
+    private var coords: [CLLocationCoordinate2D] { route.coordinates }
+
+    private var currentCoordinate: CLLocationCoordinate2D? {
+        guard coords.count >= 2 else { return nil }
+        let index = Int(sliderValue * Double(coords.count - 1))
+        return coords[min(index, coords.count - 1)]
+    }
+
+    private var currentTime: Date? {
+        guard let duration = route.duration else { return nil }
+        return route.startDate.addingTimeInterval(sliderValue * duration)
+    }
 
     var body: some View {
         Map(position: $position) {
-            let coords = route.coordinates
             if let first = coords.first {
                 Annotation("出発", coordinate: first) {
                     ZStack {
@@ -43,17 +56,59 @@ struct RouteDetailView: View {
                 MapPolyline(coordinates: coords)
                     .stroke(.yellow, lineWidth: 4)
             }
+            if let coord = currentCoordinate {
+                Annotation("", coordinate: coord) {
+                    ZStack {
+                        Circle()
+                            .fill(.blue)
+                            .frame(width: 36, height: 36)
+                        Image(systemName: "figure.walk")
+                            .foregroundStyle(.white)
+                            .font(.subheadline)
+                    }
+                    .shadow(radius: 4)
+                }
+            }
         }
         .navigationTitle(route.title)
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) {
-            routeInfoBar
+            VStack(spacing: 0) {
+                if coords.count >= 2 {
+                    timeSlider
+                }
+                routeInfoBar
+            }
         }
         .onAppear {
             if let region = route.mapRegion {
                 position = .region(region)
             }
         }
+    }
+
+    private var timeSlider: some View {
+        VStack(spacing: 4) {
+            if let time = currentTime {
+                Text(time.formatted(date: .omitted, time: .shortened))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            HStack(spacing: 8) {
+                Text("開始")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Slider(value: $sliderValue, in: 0...1)
+                    .tint(.blue)
+                Text("終了")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 16)
+        }
+        .padding(.vertical, 10)
+        .background(.regularMaterial)
     }
 
     private var routeInfoBar: some View {
