@@ -41,7 +41,7 @@ struct RouteDetailView: View {
             }
             if coords.count >= 2 {
                 MapPolyline(coordinates: coords)
-                    .stroke(.blue, lineWidth: 4)
+                    .stroke(.yellow, lineWidth: 4)
             }
         }
         .navigationTitle(route.title)
