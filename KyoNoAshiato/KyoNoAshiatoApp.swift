@@ -10,9 +10,12 @@ import SwiftData
 
 @main
 struct KyoNoAshiatoApp: App {
+    @State private var locationManager = LocationManager()
+
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            Item.self,
+            RouteRecord.self,
+            LocationPoint.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
@@ -26,6 +29,7 @@ struct KyoNoAshiatoApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environment(locationManager)
         }
         .modelContainer(sharedModelContainer)
     }
