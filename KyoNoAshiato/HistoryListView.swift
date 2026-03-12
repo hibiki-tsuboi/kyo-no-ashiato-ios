@@ -10,7 +10,6 @@ import SwiftData
 
 struct HistoryListView: View {
     @Query(sort: \RouteRecord.startDate, order: .reverse) private var routes: [RouteRecord]
-    @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         NavigationStack {
@@ -20,7 +19,6 @@ struct HistoryListView: View {
                         RouteRowView(route: route)
                     }
                 }
-                .onDelete(perform: deleteRoutes)
             }
             .navigationTitle("あしあと履歴")
             .overlay {
@@ -35,11 +33,7 @@ struct HistoryListView: View {
         }
     }
 
-    private func deleteRoutes(offsets: IndexSet) {
-        for index in offsets {
-            modelContext.delete(routes[index])
-        }
-    }
+
 }
 
 struct RouteRowView: View {
