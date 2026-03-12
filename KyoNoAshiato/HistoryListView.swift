@@ -18,8 +18,11 @@ struct HistoryListView: View {
                     NavigationLink(destination: RouteDetailView(route: route)) {
                         RouteRowView(route: route)
                     }
+                    .listRowBackground(Color(red: 0.98, green: 0.97, blue: 0.94))
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color(red: 0.87, green: 0.82, blue: 0.72))
             .navigationTitle("あしあと履歴")
             .overlay {
                 if routes.isEmpty {
