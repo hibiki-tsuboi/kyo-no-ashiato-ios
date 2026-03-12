@@ -30,6 +30,7 @@ struct KyoNoAshiatoApp: App {
         WindowGroup {
             ContentView()
                 .environment(locationManager)
+                .preferredColorScheme(.light)
         }
         .modelContainer(sharedModelContainer)
     }
