@@ -39,7 +39,5 @@ Unit tests use Swift's **Testing** framework (`import Testing`, `@Test`, `#expec
 - **MapKit** will be used for GPS route display (not yet integrated)
 - **CoreLocation** will be needed for GPS tracking (not yet integrated)
 
-
 ## Language rules
 - Always answer in Japanese.
-
