@@ -12,6 +12,8 @@ struct RouteDetailView: View {
     let route: RouteRecord
     @State private var position: MapCameraPosition = .automatic
     @State private var sliderValue: Double = 0
+    @State private var isEditingTitle = false
+    @State private var editingTitle = ""
 
     private var coords: [CLLocationCoordinate2D] { route.coordinates }
 
@@ -72,6 +74,40 @@ struct RouteDetailView: View {
         }
         .navigationTitle(route.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    editingTitle = route.title
+                    isEditingTitle = true
+                } label: {
+                    Image(systemName: "pencil")
+                }
+            }
+        }
+        .sheet(isPresented: $isEditingTitle) {
+            NavigationStack {
+                Form {
+                    TextField("タイトル", text: $editingTitle)
+                }
+                .navigationTitle("タイトルを編集")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("キャンセル") {
+                            isEditingTitle = false
+                        }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("保存") {
+                            route.title = editingTitle
+                            isEditingTitle = false
+                        }
+                        .disabled(editingTitle.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+            }
+            .presentationDetents([.height(180)])
+        }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 0) {
                 if coords.count >= 2 {
