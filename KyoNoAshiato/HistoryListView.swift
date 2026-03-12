@@ -22,16 +22,13 @@ struct HistoryListView: View {
                 }
                 .onDelete(perform: deleteRoutes)
             }
-            .navigationTitle("履歴")
-            .toolbar {
-                EditButton()
-            }
+            .navigationTitle("あしあと履歴")
             .overlay {
                 if routes.isEmpty {
                     ContentUnavailableView(
-                        "記録がありません",
+                        "あしあとがありません",
                         systemImage: "map",
-                        description: Text("「記録」タブから旅行のルートを記録できます")
+                        description: Text("「あしあと」タブから旅行のルートを記録できます")
                     )
                 }
             }

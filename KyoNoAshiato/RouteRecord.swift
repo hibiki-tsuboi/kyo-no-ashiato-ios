@@ -31,7 +31,7 @@ final class RouteRecord {
     private static func generateTitle(from date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "ja_JP")
-        formatter.dateFormat = "yyyy年M月d日の記録"
+        formatter.dateFormat = "yyyy年M月d日のあしあと"
         return formatter.string(from: date)
     }
 

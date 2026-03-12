@@ -58,7 +58,7 @@ struct RecordingView: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("ルートを記録するために位置情報へのアクセスを許可してください。")
+            Text("あしあとを残すために位置情報へのアクセスを許可してください。")
         }
     }
 
@@ -73,7 +73,7 @@ struct RecordingView: View {
             HStack(spacing: 12) {
                 Image(systemName: locationManager.isRecording ? "stop.circle.fill" : "record.circle.fill")
                     .font(.title2)
-                Text(locationManager.isRecording ? "記録を終了" : "記録を開始")
+                Text(locationManager.isRecording ? "あしあとを終了" : "あしあとを開始")
                     .font(.headline)
             }
             .foregroundStyle(.white)
@@ -96,7 +96,7 @@ struct RecordingStatusView: View {
             Image(systemName: "record.circle.fill")
                 .foregroundStyle(.red)
                 .symbolEffect(.pulse)
-            Text("記録中  \(formattedElapsed)")
+            Text("あしあと中  \(formattedElapsed)")
                 .font(.headline)
                 .monospacedDigit()
         }
