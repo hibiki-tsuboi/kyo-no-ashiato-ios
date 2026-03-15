@@ -12,15 +12,20 @@ struct RouteDetailView: View {
     let route: RouteRecord
     @State private var position: MapCameraPosition = .automatic
     @State private var sliderValue: Double = 0
+    @State private var markerProgress: Double = 0
+    @State private var pendingMarkerProgress: Double = 0
+    @State private var isSliding = false
+    @State private var markerUpdateTask: Task<Void, Never>?
     @State private var isEditingTitle = false
     @State private var editingTitle = ""
-
-    private var coords: [CLLocationCoordinate2D] { route.coordinates }
+    @State private var cachedCoords: [CLLocationCoordinate2D] = []
+    @State private var cachedTotalDistance: CLLocationDistance = 0
+    @State private var cachedMapRegion: MKCoordinateRegion?
 
     private var currentCoordinate: CLLocationCoordinate2D? {
-        guard coords.count >= 2 else { return nil }
-        let index = Int(sliderValue * Double(coords.count - 1))
-        return coords[min(index, coords.count - 1)]
+        guard cachedCoords.count >= 2 else { return nil }
+        let index = Int(markerProgress * Double(cachedCoords.count - 1))
+        return cachedCoords[min(index, cachedCoords.count - 1)]
     }
 
     private var currentTime: Date? {
@@ -30,7 +35,7 @@ struct RouteDetailView: View {
 
     var body: some View {
         Map(position: $position) {
-            if let first = coords.first {
+            if let first = cachedCoords.first {
                 Annotation("出発", coordinate: first) {
                     ZStack {
                         Circle()
@@ -42,7 +47,7 @@ struct RouteDetailView: View {
                     }
                 }
             }
-            if let last = coords.last, coords.count > 1 {
+            if let last = cachedCoords.last, cachedCoords.count > 1 {
                 Annotation("到着", coordinate: last) {
                     ZStack {
                         Circle()
@@ -54,8 +59,8 @@ struct RouteDetailView: View {
                     }
                 }
             }
-            if coords.count >= 2 {
-                MapPolyline(coordinates: coords)
+            if cachedCoords.count >= 2 {
+                MapPolyline(coordinates: cachedCoords)
                     .stroke(.yellow, lineWidth: 4)
             }
             if let coord = currentCoordinate {
@@ -110,14 +115,15 @@ struct RouteDetailView: View {
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 0) {
-                if coords.count >= 2 {
+                if cachedCoords.count >= 2 {
                     timeSlider
                 }
                 routeInfoBar
             }
         }
         .onAppear {
-            if let region = route.mapRegion {
+            prepareRouteCache()
+            if let region = cachedMapRegion {
                 position = .region(region)
             }
         }
@@ -135,7 +141,29 @@ struct RouteDetailView: View {
                 Text("開始")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                Slider(value: $sliderValue, in: 0...1)
+                Slider(
+                    value: Binding(
+                        get: { sliderValue },
+                        set: { newValue in
+                            sliderValue = newValue
+                            pendingMarkerProgress = newValue
+                            if !isSliding {
+                                markerProgress = newValue
+                            }
+                        }
+                    ),
+                    in: 0...1,
+                    onEditingChanged: { isEditing in
+                        isSliding = isEditing
+                        if isEditing {
+                            startMarkerUpdateLoop()
+                        } else {
+                            markerUpdateTask?.cancel()
+                            markerUpdateTask = nil
+                            markerProgress = sliderValue
+                        }
+                    }
+                )
                     .tint(.blue)
                 Text("終了")
                     .font(.caption2)
@@ -159,11 +187,67 @@ struct RouteDetailView: View {
                 infoItem(label: "所要時間", value: formatDuration(duration))
                 Divider().frame(height: 32)
             }
-            infoItem(label: "距離", value: formatDistance(route.totalDistance))
+            infoItem(label: "距離", value: formatDistance(cachedTotalDistance))
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
         .background(.regularMaterial)
+    }
+
+    private func prepareRouteCache() {
+        let sortedPoints = route.points.sorted { $0.timestamp < $1.timestamp }
+        cachedCoords = sortedPoints.map {
+            CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+        }
+        cachedTotalDistance = calculateTotalDistance(from: cachedCoords)
+        cachedMapRegion = calculateMapRegion(from: cachedCoords)
+        markerProgress = sliderValue
+        pendingMarkerProgress = sliderValue
+    }
+
+    private func startMarkerUpdateLoop() {
+        markerUpdateTask?.cancel()
+        markerUpdateTask = Task {
+            while !Task.isCancelled && isSliding {
+                markerProgress = pendingMarkerProgress
+                try? await Task.sleep(nanoseconds: 33_000_000)
+            }
+        }
+    }
+
+    private func calculateTotalDistance(from coords: [CLLocationCoordinate2D]) -> CLLocationDistance {
+        guard coords.count >= 2 else { return 0 }
+        return zip(coords, coords.dropFirst()).reduce(0) { sum, pair in
+            let from = CLLocation(latitude: pair.0.latitude, longitude: pair.0.longitude)
+            let to = CLLocation(latitude: pair.1.latitude, longitude: pair.1.longitude)
+            return sum + from.distance(from: to)
+        }
+    }
+
+    private func calculateMapRegion(from coords: [CLLocationCoordinate2D]) -> MKCoordinateRegion? {
+        guard !coords.isEmpty else { return nil }
+
+        let lats = coords.map { $0.latitude }
+        let lons = coords.map { $0.longitude }
+
+        guard
+            let minLat = lats.min(),
+            let maxLat = lats.max(),
+            let minLon = lons.min(),
+            let maxLon = lons.max()
+        else {
+            return nil
+        }
+
+        let center = CLLocationCoordinate2D(
+            latitude: (minLat + maxLat) / 2,
+            longitude: (minLon + maxLon) / 2
+        )
+        let span = MKCoordinateSpan(
+            latitudeDelta: max((maxLat - minLat) * 1.4, 0.005),
+            longitudeDelta: max((maxLon - minLon) * 1.4, 0.005)
+        )
+        return MKCoordinateRegion(center: center, span: span)
     }
 
     private func infoItem(label: String, value: String) -> some View {
