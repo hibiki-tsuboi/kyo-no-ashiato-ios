@@ -68,9 +68,8 @@ struct RouteDetailView: View {
                     ZStack {
                         Circle()
                             .fill(.orange)
-                            .frame(width: 36, height: 36)
-                        Image(systemName: "figure.walk")
-                            .foregroundStyle(.white)
+                            .frame(width: 32, height: 32)
+                        Text("👣")
                             .font(.subheadline)
                     }
                     .shadow(radius: 4)
