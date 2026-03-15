@@ -137,7 +137,7 @@ struct RouteDetailView: View {
                     .monospacedDigit()
             }
             HStack(spacing: 8) {
-                Text("開始")
+                Text("出発")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Slider(
@@ -164,7 +164,7 @@ struct RouteDetailView: View {
                     }
                 )
                     .tint(.blue)
-                Text("終了")
+                Text("到着")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -176,10 +176,10 @@ struct RouteDetailView: View {
 
     private var routeInfoBar: some View {
         HStack(spacing: 0) {
-            infoItem(icon: "📍", label: "開始", value: route.startDate.formatted(date: .omitted, time: .shortened))
+            infoItem(icon: "📍", label: "出発", value: route.startDate.formatted(date: .omitted, time: .shortened))
             Divider().frame(height: 32)
             if let endDate = route.endDate {
-                infoItem(icon: "🏁", label: "終了", value: endDate.formatted(date: .omitted, time: .shortened))
+                infoItem(icon: "🏁", label: "到着", value: endDate.formatted(date: .omitted, time: .shortened))
                 Divider().frame(height: 32)
             }
             if let duration = route.duration {

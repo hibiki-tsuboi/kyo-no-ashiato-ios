@@ -10,10 +10,10 @@ import SwiftUI
 struct ContentView: View {
     var body: some View {
         TabView {
-            Tab("あしあと", systemImage: "record.circle") {
+            Tab("出発", systemImage: "record.circle") {
                 RecordingView()
             }
-            Tab("履歴", systemImage: "clock") {
+            Tab("あしあと", systemImage: "clock") {
                 HistoryListView()
             }
         }
