@@ -11,6 +11,7 @@ import SwiftData
 @main
 struct KyoNoAshiatoApp: App {
     @State private var locationManager = LocationManager()
+    @Environment(\.scenePhase) private var scenePhase
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -33,5 +34,10 @@ struct KyoNoAshiatoApp: App {
                 .preferredColorScheme(.light)
         }
         .modelContainer(sharedModelContainer)
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                locationManager.recoverIncompleteRoutes()
+            }
+        }
     }
 }

@@ -31,6 +31,21 @@ final class LocationManager: NSObject {
 
     func setup(modelContext: ModelContext) {
         self.modelContext = modelContext
+        recoverIncompleteRoutes()
+    }
+
+    func recoverIncompleteRoutes() {
+        guard let modelContext else { return }
+        let descriptor = FetchDescriptor<RouteRecord>(
+            predicate: #Predicate { $0.endDate == nil }
+        )
+        guard let incomplete = try? modelContext.fetch(descriptor) else { return }
+        for route in incomplete {
+            guard route.id != currentRoute?.id else { continue }
+            let lastTimestamp = route.points.map(\.timestamp).max()
+            route.endDate = lastTimestamp ?? route.startDate
+        }
+        try? modelContext.save()
     }
 
     func requestPermission() {
