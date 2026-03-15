@@ -22,7 +22,7 @@ struct RecordingView: View {
                     UserAnnotation()
                     if locationManager.currentCoordinates.count >= 2 {
                         MapPolyline(coordinates: locationManager.currentCoordinates)
-                            .stroke(.yellow, lineWidth: 4)
+                            .stroke(.blue, lineWidth: 4)
                     }
                 }
                 .ignoresSafeArea(edges: .top)
@@ -79,7 +79,7 @@ struct RecordingView: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 32)
             .padding(.vertical, 16)
-            .background(locationManager.isRecording ? Color.red : Color.blue)
+            .background(locationManager.isRecording ? Color.red : Color.green)
             .clipShape(Capsule())
             .shadow(radius: 6)
         }
