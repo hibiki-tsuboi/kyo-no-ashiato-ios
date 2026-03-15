@@ -10,6 +10,8 @@ import SwiftData
 
 struct HistoryListView: View {
     @Query(sort: \RouteRecord.startDate, order: .reverse) private var routes: [RouteRecord]
+    @Environment(\.modelContext) private var modelContext
+    @State private var editMode: EditMode = .inactive
 
     var body: some View {
         NavigationStack {
@@ -19,11 +21,23 @@ struct HistoryListView: View {
                         RouteRowView(route: route)
                     }
                     .listRowBackground(Color(red: 0.98, green: 0.97, blue: 0.94))
+                    .deleteDisabled(!editMode.isEditing)
                 }
+                .onDelete(perform: deleteRoutes)
             }
             .scrollContentBackground(.hidden)
             .background(Color(red: 0.87, green: 0.82, blue: 0.72))
             .navigationTitle("あしあと履歴")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(editMode.isEditing ? "完了" : "編集") {
+                        withAnimation {
+                            editMode = editMode.isEditing ? .inactive : .active
+                        }
+                    }
+                }
+            }
+            .environment(\.editMode, $editMode)
             .overlay {
                 if routes.isEmpty {
                     ContentUnavailableView(
@@ -36,7 +50,11 @@ struct HistoryListView: View {
         }
     }
 
-
+    private func deleteRoutes(offsets: IndexSet) {
+        for index in offsets {
+            modelContext.delete(routes[index])
+        }
+    }
 }
 
 struct RouteRowView: View {
