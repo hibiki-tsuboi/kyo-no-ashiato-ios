@@ -187,7 +187,11 @@ struct RouteDetailView: View {
                 infoItem(icon: "⏱️", label: "所要時間", value: formatDuration(duration))
                 Divider().frame(height: 32)
             }
-            infoItem(icon: "📍", label: "距離", value: formatDistance(cachedTotalDistance))
+            infoItem(
+                icon: route.transportMode.emoji,
+                label: "距離",
+                value: formatDistance(cachedTotalDistance)
+            )
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)

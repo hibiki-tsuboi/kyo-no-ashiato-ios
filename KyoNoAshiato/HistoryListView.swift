@@ -62,8 +62,12 @@ struct RouteRowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(route.title)
-                .font(.headline)
+            HStack(spacing: 6) {
+                Text(route.title)
+                    .font(.headline)
+                Text(route.transportMode.emoji)
+                    .font(.headline)
+            }
             HStack(spacing: 6) {
                 Text(route.startDate, style: .time)
                     .font(.subheadline)
