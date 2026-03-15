@@ -64,14 +64,11 @@ struct RouteRowView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-                let distance = route.totalDistance
-                if distance > 0 {
-                    Text("·")
-                        .foregroundStyle(.secondary)
-                    Text(formatDistance(distance))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
+                Text("·")
+                    .foregroundStyle(.secondary)
+                Text(formatDistance(route.totalDistance))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 4)
