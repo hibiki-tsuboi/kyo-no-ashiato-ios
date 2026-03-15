@@ -14,7 +14,8 @@ enum TransportMode {
     case walking   // 0〜7 km/h
     case cycling   // 7〜25 km/h
     case driving   // 25〜100 km/h
-    case transit   // 100 km/h〜
+    case transit   // 100〜400 km/h
+    case flying    // 400 km/h〜
 
     var emoji: String {
         switch self {
@@ -22,6 +23,7 @@ enum TransportMode {
         case .cycling: return "🚲"
         case .driving: return "🚗"
         case .transit: return "🚄"
+        case .flying:  return "✈️"
         }
     }
 
@@ -31,6 +33,7 @@ enum TransportMode {
         case .cycling: return "自転車"
         case .driving: return "車・バス"
         case .transit: return "電車・新幹線"
+        case .flying:  return "飛行機"
         }
     }
 }
@@ -82,13 +85,28 @@ final class RouteRecord {
     }
 
     var transportMode: TransportMode {
-        guard let duration, duration > 0, totalDistance > 0 else { return .walking }
-        let avgSpeedKmh = (totalDistance / 1000) / (duration / 3600)
-        switch avgSpeedKmh {
-        case ..<7:   return .walking
-        case 7..<25: return .cycling
+        let chronological = points.sorted { $0.timestamp < $1.timestamp }
+        guard chronological.count >= 2 else { return .walking }
+
+        let speeds: [Double] = zip(chronological, chronological.dropFirst()).compactMap { a, b in
+            let dt = b.timestamp.timeIntervalSince(a.timestamp)
+            guard dt > 0 else { return nil }
+            let from = CLLocation(latitude: a.latitude, longitude: a.longitude)
+            let to = CLLocation(latitude: b.latitude, longitude: b.longitude)
+            return (from.distance(from: to) / 1000) / (dt / 3600)
+        }
+        guard !speeds.isEmpty else { return .walking }
+
+        let sorted95 = speeds.sorted()
+        let index = Int(Double(sorted95.count) * 0.95)
+        let speedKmh = sorted95[min(index, sorted95.count - 1)]
+
+        switch speedKmh {
+        case ..<7:     return .walking
+        case 7..<25:   return .cycling
         case 25..<100: return .driving
-        default:     return .transit
+        case 100..<400: return .transit
+        default:       return .flying
         }
     }
 
