@@ -177,7 +177,7 @@ struct RouteDetailView: View {
 
     private var routeInfoBar: some View {
         HStack(spacing: 0) {
-            infoItem(icon: "🚩", label: "開始", value: route.startDate.formatted(date: .omitted, time: .shortened))
+            infoItem(icon: "📍", label: "開始", value: route.startDate.formatted(date: .omitted, time: .shortened))
             Divider().frame(height: 32)
             if let endDate = route.endDate {
                 infoItem(icon: "🏁", label: "終了", value: endDate.formatted(date: .omitted, time: .shortened))
