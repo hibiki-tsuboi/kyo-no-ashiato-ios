@@ -177,17 +177,17 @@ struct RouteDetailView: View {
 
     private var routeInfoBar: some View {
         HStack(spacing: 0) {
-            infoItem(label: "開始", value: route.startDate.formatted(date: .omitted, time: .shortened))
+            infoItem(icon: "🚩", label: "開始", value: route.startDate.formatted(date: .omitted, time: .shortened))
             Divider().frame(height: 32)
             if let endDate = route.endDate {
-                infoItem(label: "終了", value: endDate.formatted(date: .omitted, time: .shortened))
+                infoItem(icon: "🏁", label: "終了", value: endDate.formatted(date: .omitted, time: .shortened))
                 Divider().frame(height: 32)
             }
             if let duration = route.duration {
-                infoItem(label: "所要時間", value: formatDuration(duration))
+                infoItem(icon: "⏱️", label: "所要時間", value: formatDuration(duration))
                 Divider().frame(height: 32)
             }
-            infoItem(label: "距離", value: formatDistance(cachedTotalDistance))
+            infoItem(icon: "📍", label: "距離", value: formatDistance(cachedTotalDistance))
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
@@ -250,11 +250,14 @@ struct RouteDetailView: View {
         return MKCoordinateRegion(center: center, span: span)
     }
 
-    private func infoItem(label: String, value: String) -> some View {
+    private func infoItem(icon: String, label: String, value: String) -> some View {
         VStack(spacing: 2) {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+                Text(icon)
+                Text(label)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
             Text(value)
                 .font(.subheadline)
                 .fontWeight(.medium)
