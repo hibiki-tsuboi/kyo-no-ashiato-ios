@@ -61,13 +61,13 @@ struct RouteDetailView: View {
             }
             if cachedCoords.count >= 2 {
                 MapPolyline(coordinates: cachedCoords)
-                    .stroke(.yellow, lineWidth: 4)
+                    .stroke(.blue, lineWidth: 4)
             }
             if let coord = currentCoordinate {
                 Annotation("", coordinate: coord) {
                     ZStack {
                         Circle()
-                            .fill(.blue)
+                            .fill(.orange)
                             .frame(width: 36, height: 36)
                         Image(systemName: "figure.walk")
                             .foregroundStyle(.white)
