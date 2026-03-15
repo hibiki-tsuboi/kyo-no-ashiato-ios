@@ -106,7 +106,7 @@ struct ArrivalSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 32) {
+            VStack(spacing: 16) {
                 Text("👣")
                     .font(.system(size: 64))
                 Text("あしあとを記録しました")
