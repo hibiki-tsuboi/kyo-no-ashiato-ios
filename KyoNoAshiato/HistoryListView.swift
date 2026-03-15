@@ -27,7 +27,7 @@ struct HistoryListView: View {
             }
             .scrollContentBackground(.hidden)
             .background(Color(red: 0.87, green: 0.82, blue: 0.72))
-            .navigationTitle("あしあと履歴")
+            .navigationTitle("履歴👣")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(editMode.isEditing ? "完了" : "編集") {
