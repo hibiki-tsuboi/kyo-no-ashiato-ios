@@ -18,12 +18,14 @@ final class LocationManager: NSObject {
 
     private let clManager = CLLocationManager()
     private var modelContext: ModelContext?
+    private var lastAcceptedLocation: CLLocation?
 
     override init() {
         super.init()
         clManager.delegate = self
         clManager.desiredAccuracy = kCLLocationAccuracyBest
         clManager.distanceFilter = 5
+        clManager.activityType = .otherNavigation
         clManager.allowsBackgroundLocationUpdates = true
         clManager.pausesLocationUpdatesAutomatically = false
         authorizationStatus = clManager.authorizationStatus
@@ -59,6 +61,7 @@ final class LocationManager: NSObject {
         try? modelContext.save()
         currentRoute = route
         currentCoordinates = []
+        lastAcceptedLocation = nil
         isRecording = true
         clManager.startUpdatingLocation()
     }
@@ -70,14 +73,18 @@ final class LocationManager: NSObject {
         clManager.stopUpdatingLocation()
         isRecording = false
         currentRoute = nil
+        lastAcceptedLocation = nil
     }
 }
 
 extension LocationManager: CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let route = currentRoute, let modelContext else { return }
+        var didAddPoint = false
+
         for location in locations {
-            guard location.horizontalAccuracy >= 0 else { continue }
+            guard isValidLocation(location) else { continue }
+
             let point = LocationPoint(
                 latitude: location.coordinate.latitude,
                 longitude: location.coordinate.longitude,
@@ -86,8 +93,13 @@ extension LocationManager: CLLocationManagerDelegate {
             point.route = route
             route.points.append(point)
             currentCoordinates.append(location.coordinate)
+            lastAcceptedLocation = location
+            didAddPoint = true
         }
-        try? modelContext.save()
+
+        if didAddPoint {
+            try? modelContext.save()
+        }
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
@@ -96,5 +108,22 @@ extension LocationManager: CLLocationManagerDelegate {
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: any Error) {
         print("LocationManager error: \(error.localizedDescription)")
+    }
+
+    private func isValidLocation(_ location: CLLocation) -> Bool {
+        guard location.horizontalAccuracy >= 0 else { return false }
+        guard location.horizontalAccuracy <= 100 else { return false }
+        guard abs(location.timestamp.timeIntervalSinceNow) <= 15 else { return false }
+
+        guard let last = lastAcceptedLocation else { return true }
+
+        let timeInterval = location.timestamp.timeIntervalSince(last.timestamp)
+        guard timeInterval > 0 else { return false }
+
+        let distance = location.distance(from: last)
+        let speed = distance / timeInterval
+        let maxPlausibleSpeed: CLLocationSpeed = 95 // 約342km/h
+
+        return speed <= maxPlausibleSpeed
     }
 }
