@@ -112,8 +112,9 @@ extension LocationManager: CLLocationManagerDelegate {
 
     private func isValidLocation(_ location: CLLocation) -> Bool {
         guard location.horizontalAccuracy >= 0 else { return false }
-        guard location.horizontalAccuracy <= 100 else { return false }
-        guard abs(location.timestamp.timeIntervalSinceNow) <= 15 else { return false }
+        guard location.horizontalAccuracy <= 200 else { return false }
+        // バッチ配送された位置は数十秒遅れることがあるため許容幅を広げる。
+        guard abs(location.timestamp.timeIntervalSinceNow) <= 180 else { return false }
 
         guard let last = lastAcceptedLocation else { return true }
 
@@ -122,7 +123,7 @@ extension LocationManager: CLLocationManagerDelegate {
 
         let distance = location.distance(from: last)
         let speed = distance / timeInterval
-        let maxPlausibleSpeed: CLLocationSpeed = 95 // 約342km/h
+        let maxPlausibleSpeed: CLLocationSpeed = 120 // 約432km/h
 
         return speed <= maxPlausibleSpeed
     }
