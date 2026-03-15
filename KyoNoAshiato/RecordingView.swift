@@ -73,7 +73,7 @@ struct RecordingView: View {
             HStack(spacing: 12) {
                 Image(systemName: locationManager.isRecording ? "stop.circle.fill" : "record.circle.fill")
                     .font(.title2)
-                Text(locationManager.isRecording ? "あしあとを終了" : "あしあとを開始")
+                Text(locationManager.isRecording ? "到着" : "出発")
                     .font(.headline)
             }
             .foregroundStyle(.white)
