@@ -11,29 +11,32 @@ import CoreLocation
 import MapKit
 
 enum TransportMode: String, CaseIterable {
-    case walking   // 0〜7 km/h
-    case cycling   // 7〜25 km/h
-    case driving   // 25〜60 km/h
-    case transit   // 60〜400 km/h
-    case flying    // 400 km/h〜
+    case walking    // 0〜7 km/h
+    case cycling    // 7〜25 km/h
+    case driving    // 25〜60 km/h
+    case transit    // 60〜150 km/h
+    case shinkansen // 150〜400 km/h
+    case flying     // 400 km/h〜
 
     var emoji: String {
         switch self {
-        case .walking: return "🚶"
-        case .cycling: return "🚲"
-        case .driving: return "🚗"
-        case .transit: return "🚄"
-        case .flying:  return "✈️"
+        case .walking:    return "🚶"
+        case .cycling:    return "🚲"
+        case .driving:    return "🚗"
+        case .transit:    return "🚃"
+        case .shinkansen: return "🚄"
+        case .flying:     return "✈️"
         }
     }
 
     var label: String {
         switch self {
-        case .walking: return "徒歩"
-        case .cycling: return "自転車"
-        case .driving: return "車・バス"
-        case .transit: return "電車・新幹線"
-        case .flying:  return "飛行機"
+        case .walking:    return "徒歩"
+        case .cycling:    return "自転車"
+        case .driving:    return "車・バス"
+        case .transit:    return "電車"
+        case .shinkansen: return "新幹線"
+        case .flying:     return "飛行機"
         }
     }
 }
@@ -112,8 +115,9 @@ final class RouteRecord {
         case ..<7:     return .walking
         case 7..<25:   return .cycling
         case 25..<60: return .driving
-        case 60..<400: return .transit
-        default:       return .flying
+        case 60..<150:  return .transit
+        case 150..<400: return .shinkansen
+        default:        return .flying
         }
     }
 
