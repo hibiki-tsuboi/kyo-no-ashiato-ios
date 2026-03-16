@@ -9,7 +9,11 @@ import SwiftUI
 import SwiftData
 
 struct HistoryListView: View {
-    @Query(sort: \RouteRecord.startDate, order: .reverse) private var routes: [RouteRecord]
+    @Query(
+        filter: #Predicate<RouteRecord> { $0.endDate != nil },
+        sort: \RouteRecord.startDate,
+        order: .reverse
+    ) private var routes: [RouteRecord]
     @Environment(\.modelContext) private var modelContext
     @State private var editMode: EditMode = .inactive
 
