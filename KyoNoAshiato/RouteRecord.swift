@@ -10,11 +10,11 @@ import SwiftData
 import CoreLocation
 import MapKit
 
-enum TransportMode {
+enum TransportMode: String, CaseIterable {
     case walking   // 0〜7 km/h
     case cycling   // 7〜25 km/h
-    case driving   // 25〜100 km/h
-    case transit   // 100〜400 km/h
+    case driving   // 25〜60 km/h
+    case transit   // 60〜400 km/h
     case flying    // 400 km/h〜
 
     var emoji: String {
@@ -44,6 +44,12 @@ final class RouteRecord {
     var title: String
     var startDate: Date
     var endDate: Date?
+    var manualTransportModeRaw: String?
+
+    var manualTransportMode: TransportMode? {
+        get { manualTransportModeRaw.flatMap(TransportMode.init(rawValue:)) }
+        set { manualTransportModeRaw = newValue?.rawValue }
+    }
 
     @Relationship(deleteRule: .cascade, inverse: \LocationPoint.route)
     var points: [LocationPoint]
@@ -85,6 +91,7 @@ final class RouteRecord {
     }
 
     var transportMode: TransportMode {
+        if let manual = manualTransportMode { return manual }
         let chronological = points.sorted { $0.timestamp < $1.timestamp }
         guard chronological.count >= 2 else { return .walking }
 
@@ -104,8 +111,8 @@ final class RouteRecord {
         switch speedKmh {
         case ..<7:     return .walking
         case 7..<25:   return .cycling
-        case 25..<100: return .driving
-        case 100..<400: return .transit
+        case 25..<60: return .driving
+        case 60..<400: return .transit
         default:       return .flying
         }
     }

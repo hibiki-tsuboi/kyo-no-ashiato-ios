@@ -18,6 +18,8 @@ struct RouteDetailView: View {
     @State private var markerUpdateTask: Task<Void, Never>?
     @State private var isEditingTitle = false
     @State private var editingTitle = ""
+    @State private var isEditingTransportMode = false
+    @State private var selectedTransportMode: TransportMode = .walking
     @State private var cachedCoords: [CLLocationCoordinate2D] = []
     @State private var cachedTotalDistance: CLLocationDistance = 0
     @State private var cachedMapRegion: MKCoordinateRegion?
@@ -80,11 +82,21 @@ struct RouteDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    editingTitle = route.title
-                    isEditingTitle = true
+                Menu {
+                    Button {
+                        editingTitle = route.title
+                        isEditingTitle = true
+                    } label: {
+                        Label("タイトルを編集", systemImage: "pencil")
+                    }
+                    Button {
+                        selectedTransportMode = route.transportMode
+                        isEditingTransportMode = true
+                    } label: {
+                        Label("移動手段を変更", systemImage: "figure.walk.motion")
+                    }
                 } label: {
-                    Image(systemName: "pencil")
+                    Image(systemName: "ellipsis.circle")
                 }
             }
         }
@@ -111,6 +123,46 @@ struct RouteDetailView: View {
                 }
             }
             .presentationDetents([.height(180)])
+        }
+        .sheet(isPresented: $isEditingTransportMode) {
+            NavigationStack {
+                Form {
+                    Section {
+                        Picker("移動手段", selection: $selectedTransportMode) {
+                            ForEach(TransportMode.allCases, id: \.self) { mode in
+                                Label("\(mode.emoji) \(mode.label)", systemImage: "")
+                                    .tag(mode)
+                            }
+                        }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
+                    }
+                    if route.manualTransportMode != nil {
+                        Section {
+                            Button("自動判定に戻す", role: .destructive) {
+                                route.manualTransportMode = nil
+                                isEditingTransportMode = false
+                            }
+                        }
+                    }
+                }
+                .navigationTitle("移動手段を変更")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("キャンセル") {
+                            isEditingTransportMode = false
+                        }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("保存") {
+                            route.manualTransportMode = selectedTransportMode
+                            isEditingTransportMode = false
+                        }
+                    }
+                }
+            }
+            .presentationDetents([.medium])
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 0) {
