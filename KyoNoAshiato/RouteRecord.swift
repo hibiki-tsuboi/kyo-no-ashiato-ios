@@ -108,8 +108,8 @@ final class RouteRecord {
         guard !speeds.isEmpty else { return .walking }
 
         let sorted95 = speeds.sorted()
-        let index = Int(Double(sorted95.count) * 0.95)
-        let speedKmh = sorted95[min(index, sorted95.count - 1)]
+        let index = sorted95.count / 2
+        let speedKmh = sorted95[index]
 
         switch speedKmh {
         case ..<7:     return .walking

@@ -25,7 +25,7 @@ final class LocationManager: NSObject {
         clManager.delegate = self
         clManager.desiredAccuracy = kCLLocationAccuracyBest
         clManager.distanceFilter = 5
-        clManager.activityType = .otherNavigation
+        clManager.activityType = .other
         clManager.allowsBackgroundLocationUpdates = true
         clManager.pausesLocationUpdatesAutomatically = false
         authorizationStatus = clManager.authorizationStatus
