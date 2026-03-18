@@ -372,12 +372,10 @@ struct RouteDetailView: View {
         do {
             let snapshot = try await MKMapSnapshotter(options: options).start()
             let image = drawRoute(on: snapshot)
-            shareItems = [buildShareText(), image]
+            shareItems = [image]
             isShowingShareSheet = true
         } catch {
-            // スナップショット失敗時はテキストのみ共有
-            shareItems = [buildShareText()]
-            isShowingShareSheet = true
+            shareItems = []
         }
     }
 
@@ -426,16 +424,6 @@ struct RouteDetailView: View {
         ctx.strokeEllipse(in: rect)
     }
 
-    private func buildShareText() -> String {
-        var parts: [String] = ["📍 \(route.title)"]
-        parts.append(route.startDate.formatted(date: .abbreviated, time: .shortened))
-        if let duration = route.duration {
-            parts.append("⏱ \(formatDuration(duration))")
-        }
-        parts.append("📏 \(formatDistance(cachedTotalDistance))")
-        parts.append("\(route.transportMode.emoji) \(route.transportMode.label)")
-        return parts.joined(separator: "\n")
-    }
 }
 
 private struct ShareSheet: UIViewControllerRepresentable {
