@@ -140,7 +140,7 @@ struct ArrivalSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("保存") {
+                    Button("完了") {
                         route.title = title
                         try? modelContext.save()
                         dismiss()
