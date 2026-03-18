@@ -366,14 +366,15 @@ struct RouteDetailView: View {
 
         let options = MKMapSnapshotter.Options()
         options.region = region
-        options.size = CGSize(width: 800, height: 600)
-        options.scale = 2
+        options.size = CGSize(width: 600, height: 450)
+        options.scale = 1
 
         do {
             let snapshot = try await MKMapSnapshotter(options: options).start()
-            let image = compressUnder1MB(drawRoute(on: snapshot))
-            shareItems = [image]
-            isShowingShareSheet = true
+            if let url = jpegFileURL(for: drawRoute(on: snapshot)) {
+                shareItems = [url]
+                isShowingShareSheet = true
+            }
         } catch {
             shareItems = []
         }
@@ -424,17 +425,18 @@ struct RouteDetailView: View {
         ctx.strokeEllipse(in: rect)
     }
 
-    private func compressUnder1MB(_ image: UIImage) -> UIImage {
+    private func jpegFileURL(for image: UIImage) -> URL? {
         let limit = 1_000_000
         var quality: CGFloat = 0.9
-        while quality > 0.1 {
-            if let data = image.jpegData(compressionQuality: quality), data.count <= limit,
-               let compressed = UIImage(data: data) {
-                return compressed
+        while quality >= 0.1 {
+            if let data = image.jpegData(compressionQuality: quality), data.count <= limit {
+                let url = FileManager.default.temporaryDirectory.appendingPathComponent("ashiato_share.jpg")
+                try? data.write(to: url)
+                return url
             }
             quality -= 0.1
         }
-        return image
+        return nil
     }
 
 }
