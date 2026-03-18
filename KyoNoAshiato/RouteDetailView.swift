@@ -371,7 +371,7 @@ struct RouteDetailView: View {
 
         do {
             let snapshot = try await MKMapSnapshotter(options: options).start()
-            let image = drawRoute(on: snapshot)
+            let image = compressUnder1MB(drawRoute(on: snapshot))
             shareItems = [image]
             isShowingShareSheet = true
         } catch {
@@ -422,6 +422,19 @@ struct RouteDetailView: View {
         ctx.setLineWidth(2)
         ctx.fillEllipse(in: rect)
         ctx.strokeEllipse(in: rect)
+    }
+
+    private func compressUnder1MB(_ image: UIImage) -> UIImage {
+        let limit = 1_000_000
+        var quality: CGFloat = 0.9
+        while quality > 0.1 {
+            if let data = image.jpegData(compressionQuality: quality), data.count <= limit,
+               let compressed = UIImage(data: data) {
+                return compressed
+            }
+            quality -= 0.1
+        }
+        return image
     }
 
 }
