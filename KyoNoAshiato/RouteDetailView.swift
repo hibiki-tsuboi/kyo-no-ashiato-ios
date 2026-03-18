@@ -368,6 +368,7 @@ struct RouteDetailView: View {
         options.region = region
         options.size = CGSize(width: 600, height: 450)
         options.scale = 1
+        options.traitCollection = UITraitCollection(userInterfaceStyle: .light)
 
         do {
             let snapshot = try await MKMapSnapshotter(options: options).start()
