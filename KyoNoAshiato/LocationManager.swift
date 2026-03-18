@@ -67,9 +67,15 @@ final class LocationManager: NSObject {
     }
 
     func stopRecording() {
-        guard let route = currentRoute else { return }
+        guard let route = currentRoute, let modelContext else { return }
+        // ポイントが1件以下の場合、スライダーを表示できるよう末尾点を複製する
+        if route.points.count == 1, let only = route.points.first {
+            let dup = LocationPoint(latitude: only.latitude, longitude: only.longitude, timestamp: Date())
+            dup.route = route
+            route.points.append(dup)
+        }
         route.endDate = Date()
-        try? modelContext?.save()
+        try? modelContext.save()
         clManager.stopUpdatingLocation()
         isRecording = false
         currentRoute = nil
