@@ -7,6 +7,7 @@
 
 import SwiftUI
 import MapKit
+import UIKit
 
 struct RouteDetailView: View {
     let route: RouteRecord
@@ -23,6 +24,9 @@ struct RouteDetailView: View {
     @State private var cachedCoords: [CLLocationCoordinate2D] = []
     @State private var cachedTotalDistance: CLLocationDistance = 0
     @State private var cachedMapRegion: MKCoordinateRegion?
+    @State private var shareItems: [Any] = []
+    @State private var isShowingShareSheet = false
+    @State private var isGeneratingSnapshot = false
 
     private var currentCoordinate: CLLocationCoordinate2D? {
         guard cachedCoords.count >= 2 else { return nil }
@@ -81,6 +85,18 @@ struct RouteDetailView: View {
         .navigationTitle(route.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Task { await generateShareSnapshot() }
+                } label: {
+                    if isGeneratingSnapshot {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
+                .disabled(isGeneratingSnapshot)
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button {
@@ -163,6 +179,9 @@ struct RouteDetailView: View {
                 }
             }
             .presentationDetents([.medium])
+        }
+        .sheet(isPresented: $isShowingShareSheet) {
+            ShareSheet(items: shareItems)
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 0) {
@@ -337,4 +356,94 @@ struct RouteDetailView: View {
             return "\(m)分"
         }
     }
+
+    // MARK: - Share
+
+    private func generateShareSnapshot() async {
+        guard let region = cachedMapRegion, cachedCoords.count >= 2 else { return }
+        isGeneratingSnapshot = true
+        defer { isGeneratingSnapshot = false }
+
+        let options = MKMapSnapshotter.Options()
+        options.region = region
+        options.size = CGSize(width: 800, height: 600)
+        options.scale = 2
+
+        do {
+            let snapshot = try await MKMapSnapshotter(options: options).start()
+            let image = drawRoute(on: snapshot)
+            shareItems = [buildShareText(), image]
+            isShowingShareSheet = true
+        } catch {
+            // スナップショット失敗時はテキストのみ共有
+            shareItems = [buildShareText()]
+            isShowingShareSheet = true
+        }
+    }
+
+    private func drawRoute(on snapshot: MKMapSnapshotter.Snapshot) -> UIImage {
+        let base = snapshot.image
+        let renderer = UIGraphicsImageRenderer(size: base.size, format: {
+            let fmt = UIGraphicsImageRendererFormat()
+            fmt.scale = base.scale
+            return fmt
+        }())
+        return renderer.image { ctx in
+            base.draw(at: .zero)
+            let cgCtx = ctx.cgContext
+
+            // ルートのポリライン描画
+            cgCtx.setStrokeColor(UIColor.systemBlue.cgColor)
+            cgCtx.setLineWidth(4)
+            cgCtx.setLineCap(.round)
+            cgCtx.setLineJoin(.round)
+            if let first = cachedCoords.first {
+                cgCtx.move(to: snapshot.point(for: first))
+            }
+            for coord in cachedCoords.dropFirst() {
+                cgCtx.addLine(to: snapshot.point(for: coord))
+            }
+            cgCtx.strokePath()
+
+            // 出発マーカー（緑）
+            if let first = cachedCoords.first {
+                drawCircleMarker(at: snapshot.point(for: first), color: .systemGreen, in: cgCtx)
+            }
+            // 到着マーカー（赤）
+            if let last = cachedCoords.last {
+                drawCircleMarker(at: snapshot.point(for: last), color: .systemRed, in: cgCtx)
+            }
+        }
+    }
+
+    private func drawCircleMarker(at point: CGPoint, color: UIColor, in ctx: CGContext) {
+        let radius: CGFloat = 10
+        let rect = CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)
+        ctx.setFillColor(color.cgColor)
+        ctx.setStrokeColor(UIColor.white.cgColor)
+        ctx.setLineWidth(2)
+        ctx.fillEllipse(in: rect)
+        ctx.strokeEllipse(in: rect)
+    }
+
+    private func buildShareText() -> String {
+        var parts: [String] = ["📍 \(route.title)"]
+        parts.append(route.startDate.formatted(date: .abbreviated, time: .shortened))
+        if let duration = route.duration {
+            parts.append("⏱ \(formatDuration(duration))")
+        }
+        parts.append("📏 \(formatDistance(cachedTotalDistance))")
+        parts.append("\(route.transportMode.emoji) \(route.transportMode.label)")
+        return parts.joined(separator: "\n")
+    }
+}
+
+private struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
