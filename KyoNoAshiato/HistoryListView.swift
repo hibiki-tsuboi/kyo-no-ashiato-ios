@@ -47,7 +47,7 @@ struct HistoryListView: View {
                     ContentUnavailableView(
                         "あしあとがありません",
                         systemImage: "map",
-                        description: Text("「あしあと」タブから旅行のルートを記録できます")
+                        description: Text("「出発」タブからあしあとが記録できます")
                     )
                 }
             }
