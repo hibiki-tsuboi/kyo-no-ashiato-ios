@@ -86,7 +86,7 @@ struct RouteDetailView: View {
 
             routeOverviewButton
                 .padding(.trailing, 16)
-                .padding(.bottom, cachedCoords.count >= 2 ? 120 : 72)
+                .padding(.bottom, 16)
         }
         .navigationTitle(route.title)
         .navigationBarTitleDisplayMode(.inline)
