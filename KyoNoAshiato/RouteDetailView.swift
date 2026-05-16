@@ -209,7 +209,7 @@ struct RouteDetailView: View {
         Button {
             showEntireRoute()
         } label: {
-            Image(systemName: "arrow.up.left.and.down.right.magnifyingglass")
+            Image(systemName: "scope")
                 .font(.title3)
                 .foregroundStyle(.primary)
                 .frame(width: 44, height: 44)
