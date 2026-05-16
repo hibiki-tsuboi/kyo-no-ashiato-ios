@@ -31,7 +31,7 @@ struct RecordingView: View {
 
                 currentLocationButton
                     .padding(.trailing, 16)
-                    .padding(.bottom, locationManager.isRecording ? 128 : 112)
+                    .padding(.bottom, 54)
 
                 VStack(spacing: 0) {
                     if locationManager.isRecording {
