@@ -29,6 +29,10 @@ struct RecordingView: View {
                 }
                 .ignoresSafeArea(edges: .top)
 
+                currentLocationButton
+                    .padding(.trailing, 16)
+                    .padding(.bottom, locationManager.isRecording ? 128 : 112)
+
                 VStack(spacing: 0) {
                     if locationManager.isRecording {
                         RecordingStatusView(route: locationManager.currentRoute)
@@ -67,6 +71,22 @@ struct RecordingView: View {
         }
     }
 
+    private var currentLocationButton: some View {
+        Button {
+            centerOnCurrentLocation()
+        } label: {
+            Image(systemName: "location.fill")
+                .font(.title3)
+                .foregroundStyle(.primary)
+                .frame(width: 44, height: 44)
+                .background(.regularMaterial)
+                .clipShape(Circle())
+                .shadow(radius: 4)
+        }
+        .accessibilityLabel("現在地へ移動")
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
     private var recordingButton: some View {
         Button {
             if locationManager.isRecording {
@@ -89,6 +109,19 @@ struct RecordingView: View {
             .background(locationManager.isRecording ? Color.red : Color.green)
             .clipShape(Capsule())
             .shadow(radius: 6)
+        }
+    }
+
+    private func centerOnCurrentLocation() {
+        switch locationManager.authorizationStatus {
+        case .notDetermined:
+            locationManager.requestPermission()
+        case .denied, .restricted:
+            showPermissionAlert = true
+        default:
+            withAnimation(.easeInOut) {
+                position = .userLocation(followsHeading: false, fallback: .automatic)
+            }
         }
     }
 }
