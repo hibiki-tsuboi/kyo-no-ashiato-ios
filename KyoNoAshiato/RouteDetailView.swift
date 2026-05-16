@@ -40,47 +40,53 @@ struct RouteDetailView: View {
     }
 
     var body: some View {
-        Map(position: $position) {
-            if let first = cachedCoords.first {
-                Annotation("出発", coordinate: first) {
-                    ZStack {
-                        Circle()
-                            .fill(.green)
-                            .frame(width: 32, height: 32)
-                        Image(systemName: "figure.walk")
-                            .foregroundStyle(.white)
-                            .font(.caption)
+        ZStack(alignment: .bottomTrailing) {
+            Map(position: $position) {
+                if let first = cachedCoords.first {
+                    Annotation("出発", coordinate: first) {
+                        ZStack {
+                            Circle()
+                                .fill(.green)
+                                .frame(width: 32, height: 32)
+                            Image(systemName: "figure.walk")
+                                .foregroundStyle(.white)
+                                .font(.caption)
+                        }
+                    }
+                }
+                if let last = cachedCoords.last, cachedCoords.count > 1 {
+                    Annotation("到着", coordinate: last) {
+                        ZStack {
+                            Circle()
+                                .fill(.red)
+                                .frame(width: 32, height: 32)
+                            Image(systemName: "flag.fill")
+                                .foregroundStyle(.white)
+                                .font(.caption)
+                        }
+                    }
+                }
+                if cachedCoords.count >= 2 {
+                    MapPolyline(coordinates: cachedCoords)
+                        .stroke(.blue, lineWidth: 4)
+                }
+                if let coord = currentCoordinate {
+                    Annotation("", coordinate: coord) {
+                        ZStack {
+                            Circle()
+                                .fill(.orange)
+                                .frame(width: 32, height: 32)
+                            Text("👣")
+                                .font(.subheadline)
+                        }
+                        .shadow(radius: 4)
                     }
                 }
             }
-            if let last = cachedCoords.last, cachedCoords.count > 1 {
-                Annotation("到着", coordinate: last) {
-                    ZStack {
-                        Circle()
-                            .fill(.red)
-                            .frame(width: 32, height: 32)
-                        Image(systemName: "flag.fill")
-                            .foregroundStyle(.white)
-                            .font(.caption)
-                    }
-                }
-            }
-            if cachedCoords.count >= 2 {
-                MapPolyline(coordinates: cachedCoords)
-                    .stroke(.blue, lineWidth: 4)
-            }
-            if let coord = currentCoordinate {
-                Annotation("", coordinate: coord) {
-                    ZStack {
-                        Circle()
-                            .fill(.orange)
-                            .frame(width: 32, height: 32)
-                        Text("👣")
-                            .font(.subheadline)
-                    }
-                    .shadow(radius: 4)
-                }
-            }
+
+            routeOverviewButton
+                .padding(.trailing, 16)
+                .padding(.bottom, cachedCoords.count >= 2 ? 120 : 72)
         }
         .navigationTitle(route.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -199,6 +205,22 @@ struct RouteDetailView: View {
         }
     }
 
+    private var routeOverviewButton: some View {
+        Button {
+            showEntireRoute()
+        } label: {
+            Image(systemName: "arrow.up.left.and.down.right.magnifyingglass")
+                .font(.title3)
+                .foregroundStyle(.primary)
+                .frame(width: 44, height: 44)
+                .background(.regularMaterial)
+                .clipShape(Circle())
+                .shadow(radius: 4)
+        }
+        .accessibilityLabel("ルート全体を表示")
+        .disabled(cachedMapRegion == nil)
+    }
+
     private var timeSlider: some View {
         VStack(spacing: 4) {
             if let time = currentTime {
@@ -277,6 +299,13 @@ struct RouteDetailView: View {
         cachedMapRegion = calculateMapRegion(from: cachedCoords)
         markerProgress = sliderValue
         pendingMarkerProgress = sliderValue
+    }
+
+    private func showEntireRoute() {
+        guard let region = cachedMapRegion else { return }
+        withAnimation(.easeInOut) {
+            position = .region(region)
+        }
     }
 
     private func startMarkerUpdateLoop() {
