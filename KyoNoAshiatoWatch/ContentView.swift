@@ -53,10 +53,13 @@ struct ContentView: View {
                 .fontWeight(.semibold)
                 .foregroundStyle(.orange)
                 .multilineTextAlignment(.center)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 6)
         .background(Color.orange.opacity(0.18))
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }

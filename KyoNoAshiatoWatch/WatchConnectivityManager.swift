@@ -49,7 +49,7 @@ final class WatchConnectivityManager: NSObject {
             return
         }
         guard session.isReachable else {
-            lastError = "iPhoneでアプリを\n起動してください"
+            lastError = "iPhone でアプリを起動してください"
             return
         }
         lastError = nil
@@ -63,7 +63,7 @@ final class WatchConnectivityManager: NSObject {
         }, errorHandler: { [weak self] error in
             Task { @MainActor in
                 self?.finishSending()
-                self?.lastError = "iPhoneでアプリを\n起動してください"
+                self?.lastError = "iPhone でアプリを起動してください"
             }
         })
     }
@@ -77,7 +77,7 @@ final class WatchConnectivityManager: NSObject {
             await MainActor.run {
                 guard let self, self.isSending else { return }
                 self.isSending = false
-                self.lastError = "iPhoneでアプリを\n起動してください"
+                self.lastError = "iPhone でアプリを起動してください"
             }
         }
     }
