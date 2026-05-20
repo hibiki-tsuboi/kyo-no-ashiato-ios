@@ -1,6 +1,6 @@
 //
 //  WatchConnectivityManager.swift
-//  KyoNoAshiatoWatch Watch App
+//  KyoNoAshiatoWatch
 //
 //  Watch 側で iPhone とメッセージをやり取りする。
 //

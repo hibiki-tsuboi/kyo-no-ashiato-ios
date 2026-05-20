@@ -1,6 +1,6 @@
 //
 //  KyoNoAshiatoWatchApp.swift
-//  KyoNoAshiatoWatch Watch App
+//  KyoNoAshiatoWatch
 //
 //  Created by Hibiki Tsuboi on 2026/05/20.
 //

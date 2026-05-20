@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		B6A40F092FBDBD240019F921 /* KyoNoAshiatoWatch Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = B6A40EFF2FBDBD240019F921 /* KyoNoAshiatoWatch Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		B6A40F092FBDBD240019F921 /* KyoNoAshiatoWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = B6A40EFF2FBDBD240019F921 /* KyoNoAshiatoWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -16,7 +16,7 @@
 			containerPortal = B6E23DC92F62625E00187C6C /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = B6A40EFE2FBDBD240019F921;
-			remoteInfo = "KyoNoAshiatoWatch Watch App";
+			remoteInfo = "KyoNoAshiatoWatch";
 		};
 		B6E23DE32F62625F00187C6C /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -41,7 +41,7 @@
 			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
 			dstSubfolderSpec = 16;
 			files = (
-				B6A40F092FBDBD240019F921 /* KyoNoAshiatoWatch Watch App.app in Embed Watch Content */,
+				B6A40F092FBDBD240019F921 /* KyoNoAshiatoWatch.app in Embed Watch Content */,
 			);
 			name = "Embed Watch Content";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -49,7 +49,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		B6A40EFF2FBDBD240019F921 /* KyoNoAshiatoWatch Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "KyoNoAshiatoWatch Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B6A40EFF2FBDBD240019F921 /* KyoNoAshiatoWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "KyoNoAshiatoWatch.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		B6E23DD12F62625E00187C6C /* KyoNoAshiato.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KyoNoAshiato.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B6E23DE22F62625F00187C6C /* KyoNoAshiatoTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KyoNoAshiatoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B6E23DEC2F62625F00187C6C /* KyoNoAshiatoUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KyoNoAshiatoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -66,9 +66,9 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		B6A40F002FBDBD240019F921 /* KyoNoAshiatoWatch Watch App */ = {
+		B6A40F002FBDBD240019F921 /* KyoNoAshiatoWatch */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "KyoNoAshiatoWatch Watch App";
+			path = "KyoNoAshiatoWatch";
 			sourceTree = "<group>";
 		};
 		B6E23DD32F62625E00187C6C /* KyoNoAshiato */ = {
@@ -129,7 +129,7 @@
 				B6E23DD32F62625E00187C6C /* KyoNoAshiato */,
 				B6E23DE52F62625F00187C6C /* KyoNoAshiatoTests */,
 				B6E23DEF2F62625F00187C6C /* KyoNoAshiatoUITests */,
-				B6A40F002FBDBD240019F921 /* KyoNoAshiatoWatch Watch App */,
+				B6A40F002FBDBD240019F921 /* KyoNoAshiatoWatch */,
 				B6E23DD22F62625E00187C6C /* Products */,
 			);
 			sourceTree = "<group>";
@@ -140,7 +140,7 @@
 				B6E23DD12F62625E00187C6C /* KyoNoAshiato.app */,
 				B6E23DE22F62625F00187C6C /* KyoNoAshiatoTests.xctest */,
 				B6E23DEC2F62625F00187C6C /* KyoNoAshiatoUITests.xctest */,
-				B6A40EFF2FBDBD240019F921 /* KyoNoAshiatoWatch Watch App.app */,
+				B6A40EFF2FBDBD240019F921 /* KyoNoAshiatoWatch.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -148,9 +148,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		B6A40EFE2FBDBD240019F921 /* KyoNoAshiatoWatch Watch App */ = {
+		B6A40EFE2FBDBD240019F921 /* KyoNoAshiatoWatch */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = B6A40F0A2FBDBD240019F921 /* Build configuration list for PBXNativeTarget "KyoNoAshiatoWatch Watch App" */;
+			buildConfigurationList = B6A40F0A2FBDBD240019F921 /* Build configuration list for PBXNativeTarget "KyoNoAshiatoWatch" */;
 			buildPhases = (
 				B6A40EFB2FBDBD240019F921 /* Sources */,
 				B6A40EFC2FBDBD240019F921 /* Frameworks */,
@@ -161,13 +161,13 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				B6A40F002FBDBD240019F921 /* KyoNoAshiatoWatch Watch App */,
+				B6A40F002FBDBD240019F921 /* KyoNoAshiatoWatch */,
 			);
-			name = "KyoNoAshiatoWatch Watch App";
+			name = "KyoNoAshiatoWatch";
 			packageProductDependencies = (
 			);
-			productName = "KyoNoAshiatoWatch Watch App";
-			productReference = B6A40EFF2FBDBD240019F921 /* KyoNoAshiatoWatch Watch App.app */;
+			productName = "KyoNoAshiatoWatch";
+			productReference = B6A40EFF2FBDBD240019F921 /* KyoNoAshiatoWatch.app */;
 			productType = "com.apple.product-type.application";
 		};
 		B6E23DD02F62625E00187C6C /* KyoNoAshiato */ = {
@@ -283,7 +283,7 @@
 				B6E23DD02F62625E00187C6C /* KyoNoAshiato */,
 				B6E23DE12F62625F00187C6C /* KyoNoAshiatoTests */,
 				B6E23DEB2F62625F00187C6C /* KyoNoAshiatoUITests */,
-				B6A40EFE2FBDBD240019F921 /* KyoNoAshiatoWatch Watch App */,
+				B6A40EFE2FBDBD240019F921 /* KyoNoAshiatoWatch */,
 			);
 		};
 /* End PBXProject section */
@@ -353,7 +353,7 @@
 /* Begin PBXTargetDependency section */
 		B6A40F082FBDBD240019F921 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = B6A40EFE2FBDBD240019F921 /* KyoNoAshiatoWatch Watch App */;
+			target = B6A40EFE2FBDBD240019F921 /* KyoNoAshiatoWatch */;
 			targetProxy = B6A40F072FBDBD240019F921 /* PBXContainerItemProxy */;
 		};
 		B6E23DE42F62625F00187C6C /* PBXTargetDependency */ = {
@@ -399,7 +399,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 4;
-				WATCHOS_DEPLOYMENT_TARGET = 26.5;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
 			};
 			name = Debug;
 		};
@@ -433,7 +433,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 4;
-				WATCHOS_DEPLOYMENT_TARGET = 26.5;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
 			};
 			name = Release;
 		};
@@ -727,7 +727,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		B6A40F0A2FBDBD240019F921 /* Build configuration list for PBXNativeTarget "KyoNoAshiatoWatch Watch App" */ = {
+		B6A40F0A2FBDBD240019F921 /* Build configuration list for PBXNativeTarget "KyoNoAshiatoWatch" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				B6A40F0B2FBDBD240019F921 /* Debug */,
