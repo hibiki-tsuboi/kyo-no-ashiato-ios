@@ -17,7 +17,9 @@ struct ContentView: View {
         VStack(spacing: 10) {
             statusHeader
 
-            if connectivity.isRecording {
+            if let error = connectivity.lastError {
+                errorBanner(error)
+            } else if connectivity.isRecording {
                 Text(formattedElapsed)
                     .font(.system(.title2, design: .rounded).monospacedDigit())
                     .fontWeight(.bold)
@@ -34,18 +36,29 @@ struct ContentView: View {
             Spacer(minLength: 4)
 
             actionButton
-
-            if let error = connectivity.lastError {
-                Text(error)
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-                    .multilineTextAlignment(.center)
-            }
         }
         .padding(.vertical, 4)
         .onReceive(ticker) { date in
             now = date
         }
+    }
+
+    private func errorBanner(_ message: String) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: "exclamationmark.iphone")
+                .font(.title3)
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.footnote)
+                .fontWeight(.semibold)
+                .foregroundStyle(.orange)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 4)
+        .background(Color.orange.opacity(0.18))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     private var statusHeader: some View {
@@ -63,7 +76,15 @@ struct ContentView: View {
             connectivity.toggleRecording()
         } label: {
             HStack {
-                Image(systemName: connectivity.isRecording ? "stop.circle.fill" : "record.circle.fill")
+                ZStack {
+                    Image(systemName: connectivity.isRecording ? "stop.circle.fill" : "record.circle.fill")
+                        .opacity(connectivity.isSending ? 0 : 1)
+                    if connectivity.isSending {
+                        ProgressView()
+                            .tint(.white)
+                    }
+                }
+                .frame(width: 20, height: 20)
                 Text(connectivity.isRecording ? "到着" : "出発")
                     .fontWeight(.semibold)
             }
@@ -71,6 +92,7 @@ struct ContentView: View {
         }
         .tint(connectivity.isRecording ? .red : .green)
         .buttonStyle(.borderedProminent)
+        .disabled(connectivity.isSending)
     }
 
     private var formattedElapsed: String {

@@ -16,8 +16,10 @@ final class WatchConnectivityManager: NSObject {
     var distance: Double = 0
     var isReachable = false
     var lastError: String?
+    var isSending = false
 
     @ObservationIgnored private var session: WCSession { WCSession.default }
+    @ObservationIgnored private var timeoutTask: Task<Void, Never>?
 
     override init() {
         super.init()
@@ -47,19 +49,44 @@ final class WatchConnectivityManager: NSObject {
             return
         }
         guard session.isReachable else {
-            lastError = "iPhone と接続できません"
+            lastError = "iPhoneでアプリを\n起動してください"
             return
         }
         lastError = nil
+        isSending = true
+        startTimeout()
         session.sendMessage(["command": command], replyHandler: { [weak self] reply in
             Task { @MainActor in
+                self?.finishSending()
                 self?.applyPayload(reply)
             }
         }, errorHandler: { [weak self] error in
             Task { @MainActor in
-                self?.lastError = "通信エラー: \(error.localizedDescription)"
+                self?.finishSending()
+                self?.lastError = "iPhoneでアプリを\n起動してください"
             }
         })
+    }
+
+    @MainActor
+    private func startTimeout() {
+        timeoutTask?.cancel()
+        timeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self, self.isSending else { return }
+                self.isSending = false
+                self.lastError = "iPhoneでアプリを\n起動してください"
+            }
+        }
+    }
+
+    @MainActor
+    private func finishSending() {
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        isSending = false
     }
 
     @MainActor
