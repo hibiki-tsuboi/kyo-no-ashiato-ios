@@ -16,9 +16,10 @@ final class LocationManager: NSObject {
     var currentRoute: RouteRecord?
     var currentCoordinates: [CLLocationCoordinate2D] = []
 
-    private let clManager = CLLocationManager()
-    private var modelContext: ModelContext?
-    private var lastAcceptedLocation: CLLocation?
+    @ObservationIgnored private let clManager = CLLocationManager()
+    @ObservationIgnored private var modelContext: ModelContext?
+    @ObservationIgnored private var lastAcceptedLocation: CLLocation?
+    @ObservationIgnored private lazy var watchManager = WatchConnectivityManager(locationManager: self)
 
     override init() {
         super.init()
@@ -33,6 +34,7 @@ final class LocationManager: NSObject {
 
     func setup(modelContext: ModelContext) {
         self.modelContext = modelContext
+        watchManager.activate()
         recoverIncompleteRoutes()
     }
 
@@ -64,6 +66,7 @@ final class LocationManager: NSObject {
         lastAcceptedLocation = nil
         isRecording = true
         clManager.startUpdatingLocation()
+        watchManager.sendStatus()
     }
 
     func stopRecording() {
@@ -80,6 +83,7 @@ final class LocationManager: NSObject {
         isRecording = false
         currentRoute = nil
         lastAcceptedLocation = nil
+        watchManager.sendStatus()
     }
 }
 
@@ -105,6 +109,7 @@ extension LocationManager: CLLocationManagerDelegate {
 
         if didAddPoint {
             try? modelContext.save()
+            watchManager.sendStatus()
         }
     }
 
