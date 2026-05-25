@@ -50,6 +50,7 @@ struct RecordingView: View {
             if locationManager.authorizationStatus == .notDetermined {
                 locationManager.requestPermission()
             }
+            NotificationManager.shared.requestAuthorization()
         }
         .onChange(of: locationManager.authorizationStatus) { _, status in
             if status == .denied || status == .restricted {

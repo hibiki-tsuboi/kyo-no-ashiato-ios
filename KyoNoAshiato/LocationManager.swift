@@ -11,6 +11,8 @@ import Observation
 
 @Observable
 final class LocationManager: NSObject {
+    static let shared = LocationManager()
+
     var authorizationStatus: CLAuthorizationStatus = .notDetermined
     var isRecording = false
     var currentRoute: RouteRecord?
@@ -54,6 +56,12 @@ final class LocationManager: NSObject {
 
     func requestPermission() {
         clManager.requestAlwaysAuthorization()
+    }
+
+    /// 滞在/離脱の監視を開始する。アプリが終了していても、離脱時にOSが起こして
+    /// `didVisit` を届けてくれるため、付け忘れのリマインドに使える。
+    func startVisitMonitoring() {
+        clManager.startMonitoringVisits()
     }
 
     func startRecording() {
@@ -115,6 +123,20 @@ extension LocationManager: CLLocationManagerDelegate {
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         authorizationStatus = manager.authorizationStatus
+        // 常時許可が下りたタイミングで監視を確実に開始しておく。
+        if manager.authorizationStatus == .authorizedAlways {
+            manager.startMonitoringVisits()
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didVisit visit: CLVisit) {
+        // departureDate が distantFuture の訪問は「到着（まだ滞在中）」なので無視し、離脱のみ扱う。
+        guard visit.departureDate != Date.distantFuture else { return }
+        // 起動直後に過去の訪問がまとめて届くことがあるため、直近の離脱のみ通知する。
+        guard abs(visit.departureDate.timeIntervalSinceNow) <= 5 * 60 else { return }
+        // すでに記録中なら通知は不要。
+        guard !isRecording else { return }
+        NotificationManager.shared.sendDepartureReminder()
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: any Error) {

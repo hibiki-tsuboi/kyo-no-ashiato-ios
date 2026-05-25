@@ -7,10 +7,23 @@
 
 import SwiftUI
 import SwiftData
+import UIKit
+
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        // アプリが終了した状態から離脱で起こされても通知できるよう、起動時に監視を開始する。
+        LocationManager.shared.startVisitMonitoring()
+        return true
+    }
+}
 
 @main
 struct KyoNoAshiatoApp: App {
-    @State private var locationManager = LocationManager()
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @State private var locationManager = LocationManager.shared
     @Environment(\.scenePhase) private var scenePhase
 
     var sharedModelContainer: ModelContainer = {
