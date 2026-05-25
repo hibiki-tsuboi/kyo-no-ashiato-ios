@@ -16,7 +16,7 @@
 			containerPortal = B6E23DC92F62625E00187C6C /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = B6A40EFE2FBDBD240019F921;
-			remoteInfo = "KyoNoAshiatoWatch";
+			remoteInfo = KyoNoAshiatoWatch;
 		};
 		B6E23DE32F62625F00187C6C /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -49,7 +49,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		B6A40EFF2FBDBD240019F921 /* KyoNoAshiatoWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "KyoNoAshiatoWatch.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B6A40EFF2FBDBD240019F921 /* KyoNoAshiatoWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KyoNoAshiatoWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B6E23DD12F62625E00187C6C /* KyoNoAshiato.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KyoNoAshiato.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B6E23DE22F62625F00187C6C /* KyoNoAshiatoTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KyoNoAshiatoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B6E23DEC2F62625F00187C6C /* KyoNoAshiatoUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KyoNoAshiatoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -68,7 +68,7 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		B6A40F002FBDBD240019F921 /* KyoNoAshiatoWatch */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "KyoNoAshiatoWatch";
+			path = KyoNoAshiatoWatch;
 			sourceTree = "<group>";
 		};
 		B6E23DD32F62625E00187C6C /* KyoNoAshiato */ = {
@@ -163,10 +163,10 @@
 			fileSystemSynchronizedGroups = (
 				B6A40F002FBDBD240019F921 /* KyoNoAshiatoWatch */,
 			);
-			name = "KyoNoAshiatoWatch";
+			name = KyoNoAshiatoWatch;
 			packageProductDependencies = (
 			);
-			productName = "KyoNoAshiatoWatch";
+			productName = KyoNoAshiatoWatch;
 			productReference = B6A40EFF2FBDBD240019F921 /* KyoNoAshiatoWatch.app */;
 			productType = "com.apple.product-type.application";
 		};
@@ -387,7 +387,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = jp.hibiki.kyonoashiato.app.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -421,7 +421,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = jp.hibiki.kyonoashiato.app.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -452,7 +452,7 @@
 				INFOPLIST_FILE = KyoNoAshiato/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "今日のあしあと";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.navigation";
-				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "旅行中のルートをバックグラウンドでも継続して記録するために位置情報を使用します。";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "移動ルートをバックグラウンドでも記録し、外出したときに記録の開始をお知らせするために位置情報を使用します。";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "移動ルートを記録するために位置情報を使用します。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -464,7 +464,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = jp.hibiki.kyonoashiato.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -493,7 +493,7 @@
 				INFOPLIST_FILE = KyoNoAshiato/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "今日のあしあと";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.navigation";
-				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "旅行中のルートをバックグラウンドでも継続して記録するために位置情報を使用します。";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "移動ルートをバックグラウンドでも記録し、外出したときに記録の開始をお知らせするために位置情報を使用します。";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "移動ルートを記録するために位置情報を使用します。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -505,7 +505,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = jp.hibiki.kyonoashiato.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
