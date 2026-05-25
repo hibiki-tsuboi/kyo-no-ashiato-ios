@@ -22,6 +22,7 @@ final class LocationManager: NSObject {
     @ObservationIgnored private var modelContext: ModelContext?
     @ObservationIgnored private var lastAcceptedLocation: CLLocation?
     @ObservationIgnored private lazy var watchManager = WatchConnectivityManager(locationManager: self)
+    @ObservationIgnored private var homeCaptureCompletion: ((CLLocationCoordinate2D?) -> Void)?
 
     override init() {
         super.init()
@@ -64,6 +65,17 @@ final class LocationManager: NSObject {
         clManager.startMonitoringVisits()
     }
 
+    /// 自宅設定用に現在地を1度だけ取得する。失敗時は nil を返す。
+    func captureCurrentLocation(_ completion: @escaping (CLLocationCoordinate2D?) -> Void) {
+        // 記録中はすでに位置更新が流れているので、最新の位置をそのまま使う。
+        if isRecording, let coordinate = clManager.location?.coordinate {
+            completion(coordinate)
+            return
+        }
+        homeCaptureCompletion = completion
+        clManager.requestLocation()
+    }
+
     func startRecording() {
         guard let modelContext else { return }
         let route = RouteRecord()
@@ -97,6 +109,12 @@ final class LocationManager: NSObject {
 
 extension LocationManager: CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        // 自宅設定用の単発取得を最優先で処理する。
+        if let completion = homeCaptureCompletion, let location = locations.last {
+            homeCaptureCompletion = nil
+            completion(location.coordinate)
+        }
+
         guard let route = currentRoute, let modelContext else { return }
         var didAddPoint = false
 
@@ -136,10 +154,17 @@ extension LocationManager: CLLocationManagerDelegate {
         guard abs(visit.departureDate.timeIntervalSinceNow) <= 5 * 60 else { return }
         // すでに記録中なら通知は不要。
         guard !isRecording else { return }
+        // 自宅から離れたときだけ通知する（自宅未設定なら通知しない）。
+        guard HomeStore.shared.isNearHome(visit.coordinate) else { return }
         NotificationManager.shared.sendDepartureReminder()
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: any Error) {
+        // 自宅設定用の取得が失敗した場合は呼び出し元に失敗を伝える。
+        if let completion = homeCaptureCompletion {
+            homeCaptureCompletion = nil
+            completion(nil)
+        }
         print("LocationManager error: \(error.localizedDescription)")
     }
 

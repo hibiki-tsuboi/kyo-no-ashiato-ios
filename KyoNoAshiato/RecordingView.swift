@@ -16,6 +16,8 @@ struct RecordingView: View {
     @State private var position: MapCameraPosition = .userLocation(fallback: .automatic)
     @State private var showPermissionAlert = false
     @State private var completedRoute: RouteRecord?
+    @State private var isHomeSet = HomeStore.shared.isConfigured
+    @State private var homeMessage: String?
 
     var body: some View {
         NavigationStack {
@@ -44,6 +46,29 @@ struct RecordingView: View {
             }
             .navigationTitle("今日のあしあと")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button {
+                            setHomeToCurrentLocation()
+                        } label: {
+                            Label(isHomeSet ? "現在地で自宅を更新" : "現在地を自宅にする",
+                                  systemImage: "house")
+                        }
+                        if isHomeSet {
+                            Button(role: .destructive) {
+                                HomeStore.shared.clearHome()
+                                isHomeSet = false
+                            } label: {
+                                Label("自宅の設定を解除", systemImage: "trash")
+                            }
+                        }
+                    } label: {
+                        Image(systemName: isHomeSet ? "house.fill" : "house")
+                    }
+                    .accessibilityLabel("自宅の設定")
+                }
+            }
         }
         .onAppear {
             locationManager.setup(modelContext: modelContext)
@@ -69,6 +94,26 @@ struct RecordingView: View {
             Button("キャンセル", role: .cancel) {}
         } message: {
             Text("あしあとを残すために位置情報へのアクセスを許可してください。")
+        }
+        .alert("自宅の設定", isPresented: Binding(
+            get: { homeMessage != nil },
+            set: { if !$0 { homeMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(homeMessage ?? "")
+        }
+    }
+
+    private func setHomeToCurrentLocation() {
+        locationManager.captureCurrentLocation { coordinate in
+            if let coordinate {
+                HomeStore.shared.setHome(coordinate)
+                isHomeSet = true
+                homeMessage = "現在地を自宅として設定しました。次に自宅から離れたときにお知らせします。"
+            } else {
+                homeMessage = "現在地を取得できませんでした。屋外などで少し待ってから、もう一度お試しください。"
+            }
         }
     }
 
