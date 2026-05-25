@@ -14,8 +14,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        // アプリが終了した状態から離脱で起こされても通知できるよう、起動時に監視を開始する。
-        LocationManager.shared.startVisitMonitoring()
+        // アプリが終了した状態から離脱で起こされても通知できるよう、起動時に監視を最新化する。
+        LocationManager.shared.refreshHomeRegionMonitoring()
         return true
     }
 }

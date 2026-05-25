@@ -13,9 +13,6 @@ import CoreLocation
 final class HomeStore {
     static let shared = HomeStore()
 
-    /// 自宅とみなす半径。
-    private let radius: CLLocationDistance = 150
-
     private let latitudeKey = "homeLatitude"
     private let longitudeKey = "homeLongitude"
 
@@ -47,13 +44,5 @@ final class HomeStore {
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: latitudeKey)
         defaults.removeObject(forKey: longitudeKey)
-    }
-
-    /// 指定座標が自宅とみなせる範囲内か。自宅未設定なら false。
-    func isNearHome(_ coordinate: CLLocationCoordinate2D) -> Bool {
-        guard let home, CLLocationCoordinate2DIsValid(coordinate) else { return false }
-        let homeLocation = CLLocation(latitude: home.latitude, longitude: home.longitude)
-        let target = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-        return homeLocation.distance(from: target) <= radius
     }
 }

@@ -58,6 +58,7 @@ struct RecordingView: View {
                         if isHomeSet {
                             Button(role: .destructive) {
                                 HomeStore.shared.clearHome()
+                                locationManager.refreshHomeRegionMonitoring()
                                 isHomeSet = false
                             } label: {
                                 Label("自宅の設定を解除", systemImage: "trash")
@@ -109,6 +110,7 @@ struct RecordingView: View {
         locationManager.captureCurrentLocation { coordinate in
             if let coordinate {
                 HomeStore.shared.setHome(coordinate)
+                locationManager.refreshHomeRegionMonitoring()
                 isHomeSet = true
                 homeMessage = "現在地を自宅として設定しました。次に自宅から離れたときにお知らせします。"
             } else {

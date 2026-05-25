@@ -24,6 +24,11 @@ final class LocationManager: NSObject {
     @ObservationIgnored private lazy var watchManager = WatchConnectivityManager(locationManager: self)
     @ObservationIgnored private var homeCaptureCompletion: ((CLLocationCoordinate2D?) -> Void)?
 
+    /// 自宅ジオフェンスの識別子と半径。
+    /// 半径は測位のゆらぎ（屋内/住宅街では数十m）による誤発火を避けるため100m以上にしている。
+    private static let homeRegionIdentifier = "home"
+    @ObservationIgnored private let homeRegionRadius: CLLocationDistance = 100
+
     override init() {
         super.init()
         clManager.delegate = self
@@ -39,6 +44,7 @@ final class LocationManager: NSObject {
         self.modelContext = modelContext
         watchManager.activate()
         recoverIncompleteRoutes()
+        refreshHomeRegionMonitoring()
     }
 
     func recoverIncompleteRoutes() {
@@ -59,10 +65,37 @@ final class LocationManager: NSObject {
         clManager.requestAlwaysAuthorization()
     }
 
-    /// 滞在/離脱の監視を開始する。アプリが終了していても、離脱時にOSが起こして
-    /// `didVisit` を届けてくれるため、付け忘れのリマインドに使える。
-    func startVisitMonitoring() {
-        clManager.startMonitoringVisits()
+    /// 自宅を中心としたジオフェンスの監視を最新化する。アプリが終了していても、
+    /// 自宅から離れるとOSが起こして `didExitRegion` を届けてくれるため、付け忘れのリマインドに使える。
+    /// 自宅未設定・常時許可なしのときは監視しない。自宅変更時にも呼ぶこと。
+    func refreshHomeRegionMonitoring() {
+        guard clManager.authorizationStatus == .authorizedAlways else { return }
+        guard let home = HomeStore.shared.home else {
+            stopHomeRegionMonitoring()
+            return
+        }
+        // すでに同じ中心・半径で監視中なら再登録しない（保留中の離脱イベントを邪魔しないため）。
+        if let existing = monitoredHomeRegion,
+           existing.center.latitude == home.latitude,
+           existing.center.longitude == home.longitude,
+           existing.radius == homeRegionRadius {
+            return
+        }
+        stopHomeRegionMonitoring()
+        let region = CLCircularRegion(center: home, radius: homeRegionRadius, identifier: Self.homeRegionIdentifier)
+        region.notifyOnEntry = false
+        region.notifyOnExit = true
+        clManager.startMonitoring(for: region)
+    }
+
+    private var monitoredHomeRegion: CLCircularRegion? {
+        clManager.monitoredRegions.first { $0.identifier == Self.homeRegionIdentifier } as? CLCircularRegion
+    }
+
+    private func stopHomeRegionMonitoring() {
+        for region in clManager.monitoredRegions where region.identifier == Self.homeRegionIdentifier {
+            clManager.stopMonitoring(for: region)
+        }
     }
 
     /// 自宅設定用に現在地を1度だけ取得する。失敗時は nil を返す。
@@ -141,22 +174,20 @@ extension LocationManager: CLLocationManagerDelegate {
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         authorizationStatus = manager.authorizationStatus
-        // 常時許可が下りたタイミングで監視を確実に開始しておく。
-        if manager.authorizationStatus == .authorizedAlways {
-            manager.startMonitoringVisits()
-        }
+        // 常時許可が下りたタイミングで自宅ジオフェンスの監視を確実に開始しておく。
+        refreshHomeRegionMonitoring()
     }
 
-    func locationManager(_ manager: CLLocationManager, didVisit visit: CLVisit) {
-        // departureDate が distantFuture の訪問は「到着（まだ滞在中）」なので無視し、離脱のみ扱う。
-        guard visit.departureDate != Date.distantFuture else { return }
-        // 起動直後に過去の訪問がまとめて届くことがあるため、直近の離脱のみ通知する。
-        guard abs(visit.departureDate.timeIntervalSinceNow) <= 5 * 60 else { return }
+    func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
+        // 自宅ジオフェンスからの離脱だけ扱う。
+        guard region.identifier == Self.homeRegionIdentifier else { return }
         // すでに記録中なら通知は不要。
         guard !isRecording else { return }
-        // 自宅から離れたときだけ通知する（自宅未設定なら通知しない）。
-        guard HomeStore.shared.isNearHome(visit.coordinate) else { return }
         NotificationManager.shared.sendDepartureReminder()
+    }
+
+    func locationManager(_ manager: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: any Error) {
+        print("Region monitoring error: \(error.localizedDescription)")
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: any Error) {
