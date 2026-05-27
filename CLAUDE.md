@@ -25,19 +25,41 @@ xcodebuild -project KyoNoAshiato.xcodeproj -scheme KyoNoAshiatoUITests -destinat
 
 ## Architecture
 
-The app is in its initial scaffolding stage. The current structure uses the standard Xcode SwiftUI + SwiftData template:
+A working GPS footprints app with an iOS app and an Apple Watch companion. The data flows: CoreLocation → `LocationManager` → SwiftData (`RouteRecord` + `LocationPoint`), reviewed later on a map.
 
-- **`KyoNoAshiatoApp.swift`** — App entry point. Configures a `ModelContainer` with SwiftData and injects it into the view hierarchy.
-- **`ContentView.swift`** — Root view. Currently a placeholder list view using SwiftData's `@Query`.
-- **`Item.swift`** — Placeholder SwiftData `@Model`. Will be replaced with real domain models (e.g., route records, location points).
+### Entry point & navigation
+- **`KyoNoAshiatoApp.swift`** — App entry point. Builds the `ModelContainer` (schema: `RouteRecord`, `LocationPoint`, `RoutePhoto`) and injects it. An `AppDelegate` refreshes the home geofence on launch so a relaunched-from-terminated app can still notify.
+- **`ContentView.swift`** — Root `TabView` with two tabs: **出発** (`RecordingView`) and **あしあと** (`HistoryListView`).
 
-Unit tests use Swift's **Testing** framework (`import Testing`, `@Test`, `#expect()`), not XCTest.
+### Models (SwiftData `@Model`)
+- **`RouteRecord.swift`** — One recorded outing: title, start/end dates, an optional manual `TransportMode` override (otherwise inferred from speed), and cascade relationships to `points` and `photos`. Computed helpers: `coordinates`, `totalDistance`, `duration`, `transportMode`, `mapRegion`.
+- **`LocationPoint.swift`** — A single GPS sample (lat/lon/timestamp) belonging to a route.
+- **`RoutePhoto.swift`** — A memory photo placed at a tapped coordinate on a route's map. Stores a downscaled JPEG copy via `@Attribute(.externalStorage)` (independent of the route's polyline; not snapped to it).
+
+### Recording
+- **`LocationManager.swift`** — `@Observable` singleton wrapping `CLLocationManager`. Owns recording lifecycle (`start/stopRecording`), background updates, location filtering (`isValidLocation`), incomplete-route recovery, and the **home geofence** (`CLCircularRegion`, exit-only) that powers the "you left home" reminder. Holds the `ModelContext` and the `WatchConnectivityManager`.
+- **`RecordingView.swift`** — Live map (`UserAnnotation` + polyline), the 出発/到着 button, recording status, the arrival summary sheet (`ArrivalSheet`), and the home setup menu.
+- **`HomeStore.swift`** — Persists the user's "home" coordinate in `UserDefaults` only (never sent off-device).
+- **`NotificationManager.swift`** — Sends the departure reminder (with cooldown). Reminders only nudge; recording is always started manually by the user.
+
+### Review
+- **`HistoryListView.swift`** — Lists completed routes (`endDate != nil`) newest-first; row + swipe-to-delete.
+- **`RouteDetailView.swift`** — Map with polyline, start/end markers, a time-scrubbing slider with a moving 👣 marker, photo pins (tap to view/delete), tap-to-place photo adding (`MapReader` + `PhotosPicker`), title/transport-mode editing, and share-snapshot export (`MKMapSnapshotter`).
+
+### Apple Watch companion (`KyoNoAshiatoWatch/`)
+- A remote control: shows recording status/elapsed/distance and sends start/stop commands. State syncs over **WatchConnectivity** (`WatchConnectivityManager` on both sides — `updateApplicationContext` for status, messages for commands).
+
+### Tests
+- Unit tests use Swift's **Testing** framework (`import Testing`, `@Test`, `#expect()`); UI tests use **XCTest**.
 
 ## Key Technology Choices
 
 - **SwiftData** for local persistence (replaces Core Data)
-- **MapKit** will be used for GPS route display (not yet integrated)
-- **CoreLocation** will be needed for GPS tracking (not yet integrated)
+- **MapKit** for live recording and route review (`Map`, `MapPolyline`, `MapReader`, `MKMapSnapshotter`)
+- **CoreLocation** for GPS tracking and home geofencing (background updates, `CLCircularRegion`)
+- **PhotosUI** (`PhotosPicker`) for adding memory photos without requiring photo-library permission
+- **WatchConnectivity** for iPhone ↔ Apple Watch sync
+- **UserNotifications** for the departure reminder
 
 ## Language rules
 - Always answer in Japanese.
