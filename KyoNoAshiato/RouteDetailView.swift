@@ -6,11 +6,14 @@
 //
 
 import SwiftUI
+import SwiftData
 import MapKit
+import PhotosUI
 import UIKit
 
 struct RouteDetailView: View {
     let route: RouteRecord
+    @Environment(\.modelContext) private var modelContext
     @State private var position: MapCameraPosition = .automatic
     @State private var sliderValue: Double = 0
     @State private var markerProgress: Double = 0
@@ -27,6 +30,12 @@ struct RouteDetailView: View {
     @State private var shareItems: [Any] = []
     @State private var isShowingShareSheet = false
     @State private var isGeneratingSnapshot = false
+    @State private var isPlacingPhoto = false
+    @State private var pendingPhotoCoordinate: CLLocationCoordinate2D?
+    @State private var photoPickerItem: PhotosPickerItem?
+    @State private var isPhotoPickerPresented = false
+    @State private var selectedPhoto: RoutePhoto?
+    @State private var photoThumbnails: [UUID: UIImage] = [:]
 
     private var currentCoordinate: CLLocationCoordinate2D? {
         guard cachedCoords.count >= 2 else { return nil }
@@ -41,52 +50,75 @@ struct RouteDetailView: View {
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            Map(position: $position) {
-                if let first = cachedCoords.first {
-                    Annotation("出発", coordinate: first) {
-                        ZStack {
-                            Circle()
-                                .fill(.green)
-                                .frame(width: 32, height: 32)
-                            Image(systemName: "figure.walk")
-                                .foregroundStyle(.white)
-                                .font(.caption)
+            MapReader { proxy in
+                Map(position: $position) {
+                    if let first = cachedCoords.first {
+                        Annotation("出発", coordinate: first) {
+                            ZStack {
+                                Circle()
+                                    .fill(.green)
+                                    .frame(width: 32, height: 32)
+                                Image(systemName: "figure.walk")
+                                    .foregroundStyle(.white)
+                                    .font(.caption)
+                            }
+                        }
+                    }
+                    if let last = cachedCoords.last, cachedCoords.count > 1 {
+                        Annotation("到着", coordinate: last) {
+                            ZStack {
+                                Circle()
+                                    .fill(.red)
+                                    .frame(width: 32, height: 32)
+                                Image(systemName: "flag.fill")
+                                    .foregroundStyle(.white)
+                                    .font(.caption)
+                            }
+                        }
+                    }
+                    if cachedCoords.count >= 2 {
+                        MapPolyline(coordinates: cachedCoords)
+                            .stroke(.blue, lineWidth: 4)
+                    }
+                    ForEach(route.photos) { photo in
+                        Annotation("", coordinate: photo.coordinate) {
+                            photoPin(photo)
+                        }
+                    }
+                    if let coord = currentCoordinate {
+                        Annotation("", coordinate: coord) {
+                            ZStack {
+                                Circle()
+                                    .fill(.orange)
+                                    .frame(width: 32, height: 32)
+                                Text("👣")
+                                    .font(.subheadline)
+                            }
+                            .shadow(radius: 4)
                         }
                     }
                 }
-                if let last = cachedCoords.last, cachedCoords.count > 1 {
-                    Annotation("到着", coordinate: last) {
-                        ZStack {
-                            Circle()
-                                .fill(.red)
-                                .frame(width: 32, height: 32)
-                            Image(systemName: "flag.fill")
-                                .foregroundStyle(.white)
-                                .font(.caption)
-                        }
-                    }
-                }
-                if cachedCoords.count >= 2 {
-                    MapPolyline(coordinates: cachedCoords)
-                        .stroke(.blue, lineWidth: 4)
-                }
-                if let coord = currentCoordinate {
-                    Annotation("", coordinate: coord) {
-                        ZStack {
-                            Circle()
-                                .fill(.orange)
-                                .frame(width: 32, height: 32)
-                            Text("👣")
-                                .font(.subheadline)
-                        }
-                        .shadow(radius: 4)
-                    }
+                .onTapGesture(coordinateSpace: .local) { location in
+                    guard isPlacingPhoto else { return }
+                    guard let coordinate = proxy.convert(location, from: .local) else { return }
+                    pendingPhotoCoordinate = coordinate
+                    withAnimation { isPlacingPhoto = false }
+                    isPhotoPickerPresented = true
                 }
             }
 
-            routeOverviewButton
-                .padding(.trailing, 16)
-                .padding(.bottom, 16)
+            VStack(spacing: 12) {
+                photoAddButton
+                routeOverviewButton
+            }
+            .padding(.trailing, 16)
+            .padding(.bottom, 16)
+        }
+        .overlay(alignment: .top) {
+            if isPlacingPhoto {
+                placementBanner
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
         }
         .navigationTitle(route.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -189,6 +221,16 @@ struct RouteDetailView: View {
         .sheet(isPresented: $isShowingShareSheet) {
             ShareSheet(items: shareItems)
         }
+        .photosPicker(isPresented: $isPhotoPickerPresented, selection: $photoPickerItem, matching: .images)
+        .onChange(of: photoPickerItem) { _, newItem in
+            guard let newItem else { return }
+            Task { await savePickedPhoto(newItem) }
+        }
+        .sheet(item: $selectedPhoto) { photo in
+            PhotoViewerView(image: UIImage(data: photo.imageData)) {
+                deletePhoto(photo)
+            }
+        }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 0) {
                 if cachedCoords.count >= 2 {
@@ -199,6 +241,7 @@ struct RouteDetailView: View {
         }
         .onAppear {
             prepareRouteCache()
+            rebuildPhotoThumbnails()
             if let region = cachedMapRegion {
                 position = .region(region)
             }
@@ -219,6 +262,68 @@ struct RouteDetailView: View {
         }
         .accessibilityLabel("ルート全体を表示")
         .disabled(cachedMapRegion == nil)
+    }
+
+    private var photoAddButton: some View {
+        Button {
+            withAnimation { isPlacingPhoto = true }
+        } label: {
+            Image(systemName: "photo.badge.plus")
+                .font(.title3)
+                .foregroundStyle(isPlacingPhoto ? .white : .primary)
+                .frame(width: 44, height: 44)
+                .background(isPlacingPhoto ? AnyShapeStyle(.tint) : AnyShapeStyle(.regularMaterial))
+                .clipShape(Circle())
+                .shadow(radius: 4)
+        }
+        .accessibilityLabel("写真を追加")
+    }
+
+    private var placementBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "hand.tap.fill")
+            Text("写真を置く場所を地図でタップ")
+                .font(.subheadline)
+            Spacer(minLength: 8)
+            Button("キャンセル") {
+                withAnimation { isPlacingPhoto = false }
+            }
+            .font(.subheadline.weight(.medium))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.regularMaterial)
+        .clipShape(Capsule())
+        .shadow(radius: 4)
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+    }
+
+    private func photoPin(_ photo: RoutePhoto) -> some View {
+        Button {
+            selectedPhoto = photo
+        } label: {
+            Group {
+                if let thumbnail = photoThumbnails[photo.id] {
+                    Image(uiImage: thumbnail)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Image(systemName: "photo")
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(.gray)
+                }
+            }
+            .frame(width: 46, height: 46)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(.white, lineWidth: 2)
+            }
+            .shadow(radius: 3)
+        }
+        .buttonStyle(.plain)
     }
 
     private var timeSlider: some View {
@@ -386,6 +491,64 @@ struct RouteDetailView: View {
         }
     }
 
+    // MARK: - Photos
+
+    private func savePickedPhoto(_ item: PhotosPickerItem) async {
+        defer { photoPickerItem = nil }
+        guard let coordinate = pendingPhotoCoordinate else { return }
+        pendingPhotoCoordinate = nil
+
+        guard
+            let data = try? await item.loadTransferable(type: Data.self),
+            let image = UIImage(data: data),
+            let resized = downscale(image, maxDimension: 2048),
+            let jpeg = resized.jpegData(compressionQuality: 0.8)
+        else { return }
+
+        let photo = RoutePhoto(
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
+            imageData: jpeg
+        )
+        modelContext.insert(photo)
+        photo.route = route
+        try? modelContext.save()
+
+        if let thumbnail = downscale(resized, maxDimension: 160) {
+            photoThumbnails[photo.id] = thumbnail
+        }
+    }
+
+    private func deletePhoto(_ photo: RoutePhoto) {
+        photoThumbnails[photo.id] = nil
+        modelContext.delete(photo)
+        try? modelContext.save()
+    }
+
+    private func rebuildPhotoThumbnails() {
+        var thumbnails: [UUID: UIImage] = [:]
+        for photo in route.photos {
+            if let image = UIImage(data: photo.imageData),
+               let thumbnail = downscale(image, maxDimension: 160) {
+                thumbnails[photo.id] = thumbnail
+            }
+        }
+        photoThumbnails = thumbnails
+    }
+
+    /// 長辺が maxDimension を超える場合のみ縮小する。それ以下はそのまま返す。
+    private func downscale(_ image: UIImage, maxDimension: CGFloat) -> UIImage? {
+        let longest = max(image.size.width, image.size.height)
+        guard longest > maxDimension else { return image }
+        let scale = maxDimension / longest
+        let newSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: newSize, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: newSize))
+        }
+    }
+
     // MARK: - Share
 
     private func generateShareSnapshot() async {
@@ -479,4 +642,51 @@ private struct ShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+/// 写真ピンをタップしたときのフルスクリーン表示。
+/// 画像は呼び出し元でデコード済みのものを受け取るため、削除後に SwiftData オブジェクトへ触れずに済む。
+private struct PhotoViewerView: View {
+    let image: UIImage?
+    let onDelete: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var isConfirmingDelete = false
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    ContentUnavailableView("写真を読み込めませんでした", systemImage: "photo")
+                        .foregroundStyle(.white)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.black)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("閉じる") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(role: .destructive) {
+                        isConfirmingDelete = true
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                }
+            }
+            .alert("この写真を削除しますか？", isPresented: $isConfirmingDelete) {
+                Button("削除", role: .destructive) {
+                    onDelete()
+                    dismiss()
+                }
+                Button("キャンセル", role: .cancel) {}
+            } message: {
+                Text("削除すると元に戻せません。")
+            }
+        }
+    }
 }

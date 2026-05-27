@@ -57,11 +57,15 @@ final class RouteRecord {
     @Relationship(deleteRule: .cascade, inverse: \LocationPoint.route)
     var points: [LocationPoint]
 
+    @Relationship(deleteRule: .cascade, inverse: \RoutePhoto.route)
+    var photos: [RoutePhoto]
+
     init(startDate: Date = Date()) {
         self.id = UUID()
         self.startDate = startDate
         self.endDate = nil
         self.points = []
+        self.photos = []
         self.title = Self.generateTitle(from: startDate)
     }
 
