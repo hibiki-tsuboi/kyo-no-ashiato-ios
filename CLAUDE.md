@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **今日のあしあと (Kyo no Ashiato)** — An iPhone app that records GPS movement routes and lets users review their daily footprints on a map.
 
-- Bundle ID: `jp.hibiki.KyoNoAshiato`
+- Bundle ID: `jp.hibiki.kyonoashiato.app` (Watch app: `jp.hibiki.kyonoashiato.app.watchkitapp`)
 - Deployment target: iOS/iPadOS 26.2
 - Swift 5.0, SwiftUI, SwiftData
 
@@ -14,13 +14,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Build
-xcodebuild -project KyoNoAshiato.xcodeproj -scheme KyoNoAshiato -destination 'platform=iOS Simulator,name=iPhone 16' build
+xcodebuild -project KyoNoAshiato.xcodeproj -scheme KyoNoAshiato -destination 'platform=iOS Simulator,name=iPhone 17' build
 
 # Run unit tests
-xcodebuild -project KyoNoAshiato.xcodeproj -scheme KyoNoAshiatoTests -destination 'platform=iOS Simulator,name=iPhone 16' test
+xcodebuild -project KyoNoAshiato.xcodeproj -scheme KyoNoAshiatoTests -destination 'platform=iOS Simulator,name=iPhone 17' test
 
 # Run UI tests
-xcodebuild -project KyoNoAshiato.xcodeproj -scheme KyoNoAshiatoUITests -destination 'platform=iOS Simulator,name=iPhone 16' test
+xcodebuild -project KyoNoAshiato.xcodeproj -scheme KyoNoAshiatoUITests -destination 'platform=iOS Simulator,name=iPhone 17' test
 ```
 
 ## Architecture
