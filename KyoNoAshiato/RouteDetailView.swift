@@ -10,6 +10,8 @@ import SwiftData
 import MapKit
 import PhotosUI
 import UIKit
+import AVKit
+import UniformTypeIdentifiers
 
 struct RouteDetailView: View {
     let route: RouteRecord
@@ -221,13 +223,16 @@ struct RouteDetailView: View {
         .sheet(isPresented: $isShowingShareSheet) {
             ShareSheet(items: shareItems)
         }
-        .photosPicker(isPresented: $isPhotoPickerPresented, selection: $photoPickerItem, matching: .images)
+        .photosPicker(isPresented: $isPhotoPickerPresented, selection: $photoPickerItem, matching: .any(of: [.images, .videos]))
         .onChange(of: photoPickerItem) { _, newItem in
             guard let newItem else { return }
-            Task { await savePickedPhoto(newItem) }
+            Task { await savePickedMedia(newItem) }
         }
         .sheet(item: $selectedPhoto) { photo in
-            PhotoViewerView(image: UIImage(data: photo.imageData)) {
+            MediaViewerView(
+                image: UIImage(data: photo.imageData),
+                videoURL: photo.mediaType == .video ? videoTempURL(for: photo) : nil
+            ) {
                 deletePhoto(photo)
             }
         }
@@ -276,13 +281,13 @@ struct RouteDetailView: View {
                 .clipShape(Circle())
                 .shadow(radius: 4)
         }
-        .accessibilityLabel("写真を追加")
+        .accessibilityLabel("写真・動画を追加")
     }
 
     private var placementBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "hand.tap.fill")
-            Text("写真を置く場所を地図でタップ")
+            Text("写真・動画を置く場所を地図でタップ")
                 .font(.subheadline)
             Spacer(minLength: 8)
             Button("キャンセル") {
@@ -320,6 +325,16 @@ struct RouteDetailView: View {
             .overlay {
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(.white, lineWidth: 2)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if photo.mediaType == .video {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(4)
+                        .background(.black.opacity(0.6), in: Circle())
+                        .padding(2)
+                }
             }
             .shadow(radius: 3)
         }
@@ -491,13 +506,22 @@ struct RouteDetailView: View {
         }
     }
 
-    // MARK: - Photos
+    // MARK: - Media
 
-    private func savePickedPhoto(_ item: PhotosPickerItem) async {
+    private func savePickedMedia(_ item: PhotosPickerItem) async {
         defer { photoPickerItem = nil }
         guard let coordinate = pendingPhotoCoordinate else { return }
         pendingPhotoCoordinate = nil
 
+        let isVideo = item.supportedContentTypes.contains { $0.conforms(to: .movie) }
+        if isVideo {
+            await saveVideo(item, at: coordinate)
+        } else {
+            await savePhoto(item, at: coordinate)
+        }
+    }
+
+    private func savePhoto(_ item: PhotosPickerItem, at coordinate: CLLocationCoordinate2D) async {
         guard
             let data = try? await item.loadTransferable(type: Data.self),
             let image = UIImage(data: data),
@@ -517,6 +541,68 @@ struct RouteDetailView: View {
         if let thumbnail = downscale(resized, maxDimension: 160) {
             photoThumbnails[photo.id] = thumbnail
         }
+    }
+
+    private func saveVideo(_ item: PhotosPickerItem, at coordinate: CLLocationCoordinate2D) async {
+        guard let movie = try? await item.loadTransferable(type: PickedMovie.self) else { return }
+        defer { try? FileManager.default.removeItem(at: movie.url) }
+
+        let asset = AVURLAsset(url: movie.url)
+        guard
+            let poster = await posterImage(from: asset),
+            let resizedPoster = downscale(poster, maxDimension: 2048),
+            let posterJPEG = resizedPoster.jpegData(compressionQuality: 0.8),
+            let videoData = await compressedVideoData(from: asset)
+        else { return }
+
+        let media = RoutePhoto(
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
+            imageData: posterJPEG,
+            videoData: videoData
+        )
+        modelContext.insert(media)
+        media.route = route
+        try? modelContext.save()
+
+        if let thumbnail = downscale(resizedPoster, maxDimension: 160) {
+            photoThumbnails[media.id] = thumbnail
+        }
+    }
+
+    /// 動画の先頭フレームをポスター画像として取り出す。
+    private func posterImage(from asset: AVURLAsset) async -> UIImage? {
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 2048, height: 2048)
+        let time = CMTime(seconds: 0, preferredTimescale: 600)
+        guard let cgImage = try? await generator.image(at: time).image else { return nil }
+        return UIImage(cgImage: cgImage)
+    }
+
+    /// 動画を中画質で再エンコードして容量を抑える。失敗時は元データをそのまま保持する。
+    private func compressedVideoData(from asset: AVURLAsset) async -> Data? {
+        guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetMediumQuality) else {
+            return try? Data(contentsOf: asset.url)
+        }
+        let outURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
+        defer { try? FileManager.default.removeItem(at: outURL) }
+        do {
+            try await export.export(to: outURL, as: .mp4)
+            return try? Data(contentsOf: outURL)
+        } catch {
+            return try? Data(contentsOf: asset.url)
+        }
+    }
+
+    /// 動画ビューア用に、保存済み動画データを一時ファイルへ書き出して URL を返す。
+    private func videoTempURL(for photo: RoutePhoto) -> URL? {
+        guard let data = photo.videoData else { return nil }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("ashiato_\(photo.id.uuidString).mp4")
+        if !FileManager.default.fileExists(atPath: url.path) {
+            try? data.write(to: url)
+        }
+        return url
     }
 
     private func deletePhoto(_ photo: RoutePhoto) {
@@ -644,23 +730,37 @@ private struct ShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
-/// 写真ピンをタップしたときのフルスクリーン表示。
-/// 画像は呼び出し元でデコード済みのものを受け取るため、削除後に SwiftData オブジェクトへ触れずに済む。
-private struct PhotoViewerView: View {
+/// メディアピンをタップしたときのフルスクリーン表示。写真は静止画、動画は再生プレイヤーを出す。
+/// 画像・動画 URL は呼び出し元で用意したものを受け取るため、削除後に SwiftData オブジェクトへ触れずに済む。
+private struct MediaViewerView: View {
     let image: UIImage?
+    let videoURL: URL?
     let onDelete: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var isConfirmingDelete = false
+    @State private var player: AVPlayer?
+
+    private var isVideo: Bool { videoURL != nil }
 
     var body: some View {
         NavigationStack {
             Group {
-                if let image {
+                if let videoURL {
+                    VideoPlayer(player: player)
+                        .onAppear {
+                            if player == nil {
+                                let newPlayer = AVPlayer(url: videoURL)
+                                player = newPlayer
+                                newPlayer.play()
+                            }
+                        }
+                        .onDisappear { player?.pause() }
+                } else if let image {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFit()
                 } else {
-                    ContentUnavailableView("写真を読み込めませんでした", systemImage: "photo")
+                    ContentUnavailableView("読み込めませんでした", systemImage: "photo")
                         .foregroundStyle(.white)
                 }
             }
@@ -678,7 +778,7 @@ private struct PhotoViewerView: View {
                     }
                 }
             }
-            .alert("この写真を削除しますか？", isPresented: $isConfirmingDelete) {
+            .alert(isVideo ? "この動画を削除しますか？" : "この写真を削除しますか？", isPresented: $isConfirmingDelete) {
                 Button("削除", role: .destructive) {
                     onDelete()
                     dismiss()
@@ -687,6 +787,24 @@ private struct PhotoViewerView: View {
             } message: {
                 Text("削除すると元に戻せません。")
             }
+        }
+    }
+}
+
+/// PhotosPicker から選ばれた動画をアプリの一時ディレクトリへコピーして受け取るための転送型。
+private struct PickedMovie: Transferable {
+    let url: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(contentType: .movie) { movie in
+            SentTransferredFile(movie.url)
+        } importing: { received in
+            let copy = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension(received.file.pathExtension.isEmpty ? "mov" : received.file.pathExtension)
+            try? FileManager.default.removeItem(at: copy)
+            try FileManager.default.copyItem(at: received.file, to: copy)
+            return PickedMovie(url: copy)
         }
     }
 }
