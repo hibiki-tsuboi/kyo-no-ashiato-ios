@@ -16,6 +16,7 @@ struct HistoryListView: View {
     ) private var routes: [RouteRecord]
     @Environment(\.modelContext) private var modelContext
     @State private var editMode: EditMode = .inactive
+    @State private var showingAbout = false
 
     var body: some View {
         NavigationStack {
@@ -34,12 +35,25 @@ struct HistoryListView: View {
             .navigationTitle("あしあと👣")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingAbout = true
+                    } label: {
+                        Image(systemName: "info.circle")
+                    }
+                }
+                ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                ToolbarItem(placement: .topBarTrailing) {
                     Button(editMode.isEditing ? "完了" : "編集") {
                         withAnimation {
                             editMode = editMode.isEditing ? .inactive : .active
                         }
                     }
                 }
+            }
+            .alert("今日のあしあと", isPresented: $showingAbout) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("バージョン \(appVersion)")
             }
             .environment(\.editMode, $editMode)
             .overlay {
@@ -58,6 +72,10 @@ struct HistoryListView: View {
         for index in offsets {
             modelContext.delete(routes[index])
         }
+    }
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
     }
 }
 
