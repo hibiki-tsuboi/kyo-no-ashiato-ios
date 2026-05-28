@@ -30,9 +30,11 @@ struct HistoryListView: View {
                 }
                 .onDelete(perform: deleteRoutes)
             }
+            .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(Color(red: 0.87, green: 0.82, blue: 0.72))
             .navigationTitle("あしあと👣")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {

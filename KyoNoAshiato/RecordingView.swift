@@ -44,8 +44,6 @@ struct RecordingView: View {
                         .padding(.bottom, 48)
                 }
             }
-            .navigationTitle("今日のあしあと")
-            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
