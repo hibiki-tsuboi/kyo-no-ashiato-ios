@@ -38,6 +38,8 @@ struct RouteDetailView: View {
     @State private var isPhotoPickerPresented = false
     @State private var selectedPhoto: RoutePhoto?
     @State private var photoThumbnails: [UUID: UIImage] = [:]
+    @State private var isSavingMedia = false
+    @State private var savingPinCoordinate: CLLocationCoordinate2D?
 
     private var currentCoordinate: CLLocationCoordinate2D? {
         guard cachedCoords.count >= 2 else { return nil }
@@ -85,6 +87,11 @@ struct RouteDetailView: View {
                     ForEach(route.photos) { photo in
                         Annotation("", coordinate: photo.coordinate) {
                             photoPin(photo)
+                        }
+                    }
+                    if let savingPinCoordinate {
+                        Annotation("", coordinate: savingPinCoordinate) {
+                            savingPinPlaceholder
                         }
                     }
                     if let coord = currentCoordinate {
@@ -273,15 +280,39 @@ struct RouteDetailView: View {
         Button {
             withAnimation { isPlacingPhoto = true }
         } label: {
-            Image(systemName: "photo.badge.plus")
-                .font(.title3)
-                .foregroundStyle(isPlacingPhoto ? .white : .primary)
-                .frame(width: 44, height: 44)
-                .background(isPlacingPhoto ? AnyShapeStyle(.tint) : AnyShapeStyle(.regularMaterial))
-                .clipShape(Circle())
-                .shadow(radius: 4)
+            Group {
+                if isSavingMedia {
+                    ProgressView()
+                        .controlSize(.regular)
+                } else {
+                    Image(systemName: "photo.badge.plus")
+                        .font(.title3)
+                        .foregroundStyle(isPlacingPhoto ? .white : .primary)
+                }
+            }
+            .frame(width: 44, height: 44)
+            .background(isPlacingPhoto ? AnyShapeStyle(.tint) : AnyShapeStyle(.regularMaterial))
+            .clipShape(Circle())
+            .shadow(radius: 4)
         }
+        .disabled(isSavingMedia)
         .accessibilityLabel("写真・動画を追加")
+    }
+
+    private var savingPinPlaceholder: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(.black.opacity(0.45))
+                .frame(width: 46, height: 46)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(.white, lineWidth: 2)
+                }
+            ProgressView()
+                .controlSize(.small)
+                .tint(.white)
+        }
+        .shadow(radius: 3)
     }
 
     private var placementBanner: some View {
@@ -513,12 +544,23 @@ struct RouteDetailView: View {
         guard let coordinate = pendingPhotoCoordinate else { return }
         pendingPhotoCoordinate = nil
 
+        isSavingMedia = true
+        savingPinCoordinate = coordinate
+        defer {
+            isSavingMedia = false
+            savingPinCoordinate = nil
+        }
+
         let isVideo = item.supportedContentTypes.contains { $0.conforms(to: .movie) }
         if isVideo {
             await saveVideo(item, at: coordinate)
         } else {
             await savePhoto(item, at: coordinate)
         }
+    }
+
+    private func notifyMediaSaveSuccess() {
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
     private func savePhoto(_ item: PhotosPickerItem, at coordinate: CLLocationCoordinate2D) async {
@@ -541,6 +583,8 @@ struct RouteDetailView: View {
         if let thumbnail = downscale(resized, maxDimension: 160) {
             photoThumbnails[photo.id] = thumbnail
         }
+
+        notifyMediaSaveSuccess()
     }
 
     private func saveVideo(_ item: PhotosPickerItem, at coordinate: CLLocationCoordinate2D) async {
@@ -568,6 +612,8 @@ struct RouteDetailView: View {
         if let thumbnail = downscale(resizedPoster, maxDimension: 160) {
             photoThumbnails[media.id] = thumbnail
         }
+
+        notifyMediaSaveSuccess()
     }
 
     /// 動画の先頭フレームをポスター画像として取り出す。
