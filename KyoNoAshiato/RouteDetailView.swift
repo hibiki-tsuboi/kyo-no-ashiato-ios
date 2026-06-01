@@ -239,8 +239,11 @@ struct RouteDetailView: View {
         .onChange(of: photoPickerItems) { _, newItems in
             guard !newItems.isEmpty else { return }
             let items = newItems
-            photoPickerItems = []
-            Task { await savePickedMedia(items) }
+            // state 書き戻しは view 更新サイクルの外に出して "Modifying state during view update" を避ける
+            Task { @MainActor in
+                photoPickerItems = []
+                await savePickedMedia(items)
+            }
         }
         .sheet(item: $selectedPhoto) { photo in
             MediaCarouselView(
@@ -979,8 +982,11 @@ private struct MediaCarouselView: View {
             .onChange(of: pickerItems) { _, newItems in
                 guard !newItems.isEmpty else { return }
                 let picked = newItems
-                pickerItems = []
-                Task { await performAdd(picked) }
+                // state 書き戻しは view 更新サイクルの外に出して "Modifying state during view update" を避ける
+                Task { @MainActor in
+                    pickerItems = []
+                    await performAdd(picked)
+                }
             }
             .onAppear {
                 guard !hasLoaded else { return }
