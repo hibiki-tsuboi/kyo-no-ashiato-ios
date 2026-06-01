@@ -31,6 +31,7 @@ struct KyoNoAshiatoApp: App {
             RouteRecord.self,
             LocationPoint.self,
             RoutePhoto.self,
+            RouteMedia.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 

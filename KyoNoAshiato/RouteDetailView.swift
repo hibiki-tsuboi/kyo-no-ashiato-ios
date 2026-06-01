@@ -34,7 +34,7 @@ struct RouteDetailView: View {
     @State private var isGeneratingSnapshot = false
     @State private var isPlacingPhoto = false
     @State private var pendingPhotoCoordinate: CLLocationCoordinate2D?
-    @State private var photoPickerItem: PhotosPickerItem?
+    @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var isPhotoPickerPresented = false
     @State private var selectedPhoto: RoutePhoto?
     @State private var photoThumbnails: [UUID: UIImage] = [:]
@@ -230,18 +230,29 @@ struct RouteDetailView: View {
         .sheet(isPresented: $isShowingShareSheet) {
             ShareSheet(items: shareItems)
         }
-        .photosPicker(isPresented: $isPhotoPickerPresented, selection: $photoPickerItem, matching: .any(of: [.images, .videos]))
-        .onChange(of: photoPickerItem) { _, newItem in
-            guard let newItem else { return }
-            Task { await savePickedMedia(newItem) }
+        .photosPicker(
+            isPresented: $isPhotoPickerPresented,
+            selection: $photoPickerItems,
+            maxSelectionCount: 0,
+            matching: .any(of: [.images, .videos])
+        )
+        .onChange(of: photoPickerItems) { _, newItems in
+            guard !newItems.isEmpty else { return }
+            let items = newItems
+            photoPickerItems = []
+            Task { await savePickedMedia(items) }
         }
         .sheet(item: $selectedPhoto) { photo in
-            MediaViewerView(
-                image: UIImage(data: photo.imageData),
-                videoURL: photo.mediaType == .video ? videoTempURL(for: photo) : nil
-            ) {
-                deletePhoto(photo)
-            }
+            MediaCarouselView(
+                pin: photo,
+                videoURLProvider: { videoTempURL(for: $0) },
+                onDeleteItem: { item in
+                    deleteMediaItem(item, in: photo)
+                },
+                onPinEmptied: {
+                    deletePin(photo)
+                }
+            )
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 0) {
@@ -318,7 +329,7 @@ struct RouteDetailView: View {
     private var placementBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "hand.tap.fill")
-            Text("写真・動画を置く場所を地図でタップ")
+            Text("写真・動画を置く場所を地図でタップ（複数選択可）")
                 .font(.subheadline)
             Spacer(minLength: 8)
             Button("キャンセル") {
@@ -336,7 +347,9 @@ struct RouteDetailView: View {
     }
 
     private func photoPin(_ photo: RoutePhoto) -> some View {
-        Button {
+        let mediaCount = photo.allMedia.count
+        let representativeIsVideo = photo.representative.mediaType == .video
+        return Button {
             selectedPhoto = photo
         } label: {
             Group {
@@ -358,12 +371,23 @@ struct RouteDetailView: View {
                     .stroke(.white, lineWidth: 2)
             }
             .overlay(alignment: .bottomTrailing) {
-                if photo.mediaType == .video {
+                if representativeIsVideo {
                     Image(systemName: "play.fill")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(.white)
                         .padding(4)
                         .background(.black.opacity(0.6), in: Circle())
+                        .padding(2)
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if mediaCount > 1 {
+                    Text("\(mediaCount)")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(.black.opacity(0.7), in: Capsule())
                         .padding(2)
                 }
             }
@@ -539,8 +563,16 @@ struct RouteDetailView: View {
 
     // MARK: - Media
 
-    private func savePickedMedia(_ item: PhotosPickerItem) async {
-        defer { photoPickerItem = nil }
+    /// 写真または動画を準備したあとの中間データ。1 メディア分。
+    private struct PreparedMedia {
+        let imageData: Data
+        let videoData: Data?
+        /// サムネ生成に再利用するための、リサイズ済み静止画。
+        let resizedImage: UIImage
+    }
+
+    private func savePickedMedia(_ items: [PhotosPickerItem]) async {
+        guard !items.isEmpty else { return }
         guard let coordinate = pendingPhotoCoordinate else { return }
         pendingPhotoCoordinate = nil
 
@@ -551,44 +583,67 @@ struct RouteDetailView: View {
             savingPinCoordinate = nil
         }
 
-        let isVideo = item.supportedContentTypes.contains { $0.conforms(to: .movie) }
-        if isVideo {
-            await saveVideo(item, at: coordinate)
-        } else {
-            await savePhoto(item, at: coordinate)
+        var prepared: [PreparedMedia] = []
+        for item in items {
+            let isVideo = item.supportedContentTypes.contains { $0.conforms(to: .movie) }
+            if isVideo {
+                if let p = await prepareVideo(item) {
+                    prepared.append(p)
+                }
+            } else {
+                if let p = await preparePhoto(item) {
+                    prepared.append(p)
+                }
+            }
         }
+
+        guard let first = prepared.first else { return }
+
+        // 1 タップで作る 1 ピン。レガシー列は先頭メディアでシードして互換性を保ち、
+        // 実体は `media` に全件 RouteMedia としてぶら下げる（表示は `allMedia` 経由）。
+        let pin = RoutePhoto(
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
+            imageData: first.imageData,
+            videoData: first.videoData
+        )
+        modelContext.insert(pin)
+        pin.route = route
+
+        for (index, p) in prepared.enumerated() {
+            let media = RouteMedia(
+                imageData: p.imageData,
+                videoData: p.videoData,
+                sortOrder: index
+            )
+            modelContext.insert(media)
+            media.photo = pin
+        }
+        try? modelContext.save()
+
+        if let thumbnail = downscale(first.resizedImage, maxDimension: 160) {
+            photoThumbnails[pin.id] = thumbnail
+        }
+
+        notifyMediaSaveSuccess()
     }
 
     private func notifyMediaSaveSuccess() {
         UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
-    private func savePhoto(_ item: PhotosPickerItem, at coordinate: CLLocationCoordinate2D) async {
+    private func preparePhoto(_ item: PhotosPickerItem) async -> PreparedMedia? {
         guard
             let data = try? await item.loadTransferable(type: Data.self),
             let image = UIImage(data: data),
             let resized = downscale(image, maxDimension: 2048),
             let jpeg = resized.jpegData(compressionQuality: 0.8)
-        else { return }
-
-        let photo = RoutePhoto(
-            latitude: coordinate.latitude,
-            longitude: coordinate.longitude,
-            imageData: jpeg
-        )
-        modelContext.insert(photo)
-        photo.route = route
-        try? modelContext.save()
-
-        if let thumbnail = downscale(resized, maxDimension: 160) {
-            photoThumbnails[photo.id] = thumbnail
-        }
-
-        notifyMediaSaveSuccess()
+        else { return nil }
+        return PreparedMedia(imageData: jpeg, videoData: nil, resizedImage: resized)
     }
 
-    private func saveVideo(_ item: PhotosPickerItem, at coordinate: CLLocationCoordinate2D) async {
-        guard let movie = try? await item.loadTransferable(type: PickedMovie.self) else { return }
+    private func prepareVideo(_ item: PhotosPickerItem) async -> PreparedMedia? {
+        guard let movie = try? await item.loadTransferable(type: PickedMovie.self) else { return nil }
         defer { try? FileManager.default.removeItem(at: movie.url) }
 
         let asset = AVURLAsset(url: movie.url)
@@ -597,23 +652,8 @@ struct RouteDetailView: View {
             let resizedPoster = downscale(poster, maxDimension: 2048),
             let posterJPEG = resizedPoster.jpegData(compressionQuality: 0.8),
             let videoData = await compressedVideoData(from: asset)
-        else { return }
-
-        let media = RoutePhoto(
-            latitude: coordinate.latitude,
-            longitude: coordinate.longitude,
-            imageData: posterJPEG,
-            videoData: videoData
-        )
-        modelContext.insert(media)
-        media.route = route
-        try? modelContext.save()
-
-        if let thumbnail = downscale(resizedPoster, maxDimension: 160) {
-            photoThumbnails[media.id] = thumbnail
-        }
-
-        notifyMediaSaveSuccess()
+        else { return nil }
+        return PreparedMedia(imageData: posterJPEG, videoData: videoData, resizedImage: resizedPoster)
     }
 
     /// 動画の先頭フレームをポスター画像として取り出す。
@@ -642,25 +682,39 @@ struct RouteDetailView: View {
     }
 
     /// 動画ビューア用に、保存済み動画データを一時ファイルへ書き出して URL を返す。
-    private func videoTempURL(for photo: RoutePhoto) -> URL? {
-        guard let data = photo.videoData else { return nil }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("ashiato_\(photo.id.uuidString).mp4")
+    private func videoTempURL(for item: MediaItem) -> URL? {
+        guard let data = item.videoData else { return nil }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("ashiato_\(item.id.uuidString).mp4")
         if !FileManager.default.fileExists(atPath: url.path) {
             try? data.write(to: url)
         }
         return url
     }
 
-    private func deletePhoto(_ photo: RoutePhoto) {
-        photoThumbnails[photo.id] = nil
-        modelContext.delete(photo)
+    /// カルーセル内で個別メディアを削除する。
+    /// - レガシー（旧 1 対 1 のピン本体）を消す場合はピンごと削除する。
+    /// - 新形式の RouteMedia 1 件を消す場合はそれだけ削除し、ピンは残す。
+    ///   呼び出し側で残数が 0 になったら `deletePin` を別途呼ぶ。
+    private func deleteMediaItem(_ item: MediaItem, in pin: RoutePhoto) {
+        switch item {
+        case .legacy:
+            deletePin(pin)
+        case .modern(let media):
+            modelContext.delete(media)
+            try? modelContext.save()
+        }
+    }
+
+    private func deletePin(_ pin: RoutePhoto) {
+        photoThumbnails[pin.id] = nil
+        modelContext.delete(pin)
         try? modelContext.save()
     }
 
     private func rebuildPhotoThumbnails() {
         var thumbnails: [UUID: UIImage] = [:]
         for photo in route.photos {
-            if let image = UIImage(data: photo.imageData),
+            if let image = UIImage(data: photo.representative.imageData),
                let thumbnail = downscale(image, maxDimension: 160) {
                 thumbnails[photo.id] = thumbnail
             }
@@ -776,38 +830,48 @@ private struct ShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
-/// メディアピンをタップしたときのフルスクリーン表示。写真は静止画、動画は再生プレイヤーを出す。
-/// 画像・動画 URL は呼び出し元で用意したものを受け取るため、削除後に SwiftData オブジェクトへ触れずに済む。
-private struct MediaViewerView: View {
-    let image: UIImage?
-    let videoURL: URL?
-    let onDelete: () -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var isConfirmingDelete = false
-    @State private var player: AVPlayer?
+/// ピンに紐づく複数メディアを横スワイプで閲覧するためのフルスクリーンビュー。
+/// 旧データ（`media` 空）でも `RoutePhoto.allMedia` が 1 件返してくれるので、
+/// 単体メディア時代のピンもそのまま 1 ページのカルーセルとして同じコードで表示できる。
+private struct MediaCarouselView: View {
+    /// 表示元のピン。`onAppear` で一度だけスナップショットを取り、以降ビュー内では参照しない。
+    /// pin プロパティを body から直接読まないことで、削除途中のピンに観測（observation）が
+    /// 走って `_PersistedProperty` getter で SwiftData の assert に当たるのを避ける。
+    let pin: RoutePhoto
+    let videoURLProvider: (MediaItem) -> URL?
+    /// 個別メディア 1 件の削除依頼。呼び出し側でレガシーか新形式かに応じた削除を行う。
+    let onDeleteItem: (MediaItem) -> Void
+    /// 最後の 1 件を削除して空になった場合の通知。呼び出し側はピンごと削除する。
+    let onPinEmptied: () -> Void
 
-    private var isVideo: Bool { videoURL != nil }
+    @Environment(\.dismiss) private var dismiss
+    /// ピン本体の `allMedia` をオープン時に固定して保持するローカルスナップショット。
+    /// 削除操作はまずこの配列を更新し、そのあとに SwiftData 側を触る。
+    @State private var items: [MediaItem] = []
+    @State private var hasLoaded = false
+    @State private var currentIndex = 0
+    @State private var isConfirmingDelete = false
+
+    private var safeIndex: Int {
+        guard !items.isEmpty else { return 0 }
+        return min(max(currentIndex, 0), items.count - 1)
+    }
 
     var body: some View {
         NavigationStack {
             Group {
-                if let videoURL {
-                    VideoPlayer(player: player)
-                        .onAppear {
-                            if player == nil {
-                                let newPlayer = AVPlayer(url: videoURL)
-                                player = newPlayer
-                                newPlayer.play()
-                            }
-                        }
-                        .onDisappear { player?.pause() }
-                } else if let image {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                } else {
+                if items.isEmpty {
                     ContentUnavailableView("読み込めませんでした", systemImage: "photo")
                         .foregroundStyle(.white)
+                } else {
+                    TabView(selection: $currentIndex) {
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                            mediaPage(item)
+                                .tag(index)
+                        }
+                    }
+                    .tabViewStyle(.page(indexDisplayMode: items.count > 1 ? .automatic : .never))
+                    .indexViewStyle(.page(backgroundDisplayMode: .always))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -816,24 +880,104 @@ private struct MediaViewerView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("閉じる") { dismiss() }
                 }
+                ToolbarItem(placement: .principal) {
+                    if items.count > 1 {
+                        Text("\(safeIndex + 1) / \(items.count)")
+                            .font(.subheadline)
+                            .foregroundStyle(.white)
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(role: .destructive) {
                         isConfirmingDelete = true
                     } label: {
                         Image(systemName: "trash")
                     }
+                    .disabled(items.isEmpty)
                 }
             }
-            .alert(isVideo ? "この動画を削除しますか？" : "この写真を削除しますか？", isPresented: $isConfirmingDelete) {
-                Button("削除", role: .destructive) {
-                    onDelete()
-                    dismiss()
-                }
+            .alert(deleteAlertTitle, isPresented: $isConfirmingDelete) {
+                Button("削除", role: .destructive) { performDelete() }
                 Button("キャンセル", role: .cancel) {}
             } message: {
                 Text("削除すると元に戻せません。")
             }
+            .onAppear {
+                guard !hasLoaded else { return }
+                items = pin.allMedia
+                hasLoaded = true
+            }
         }
+    }
+
+    private var deleteAlertTitle: String {
+        guard !items.isEmpty else { return "" }
+        let isVideo = items[safeIndex].mediaType == .video
+        return isVideo ? "この動画を削除しますか？" : "この写真を削除しますか？"
+    }
+
+    @ViewBuilder
+    private func mediaPage(_ item: MediaItem) -> some View {
+        if item.mediaType == .video, let url = videoURLProvider(item) {
+            VideoPage(url: url)
+        } else if let image = UIImage(data: item.imageData) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+        } else {
+            ContentUnavailableView("読み込めませんでした", systemImage: "photo")
+                .foregroundStyle(.white)
+        }
+    }
+
+    private func performDelete() {
+        guard !items.isEmpty else { return }
+        let index = safeIndex
+        let target = items[index]
+        let willBeLast = items.count <= 1
+
+        if willBeLast {
+            // 最後の 1 件を消す場合は順序が重要：
+            // (1) ローカルの items を先に空にし、TabView の再評価から削除対象を切り離す
+            // (2) シートを閉じてビューをツリーから外す
+            // (3) その後に SwiftData の delete を実行する
+            // この順序で `pin.imageData` 等が deleted entity 上で読まれる経路をなくす。
+            items = []
+            dismiss()
+            onDeleteItem(target)
+            // .legacy の場合は onDeleteItem の中ですでにピンごと削除しているので二重 delete を避ける
+            if case .modern = target {
+                onPinEmptied()
+            }
+        } else {
+            items.remove(at: index)
+            if currentIndex >= items.count {
+                currentIndex = max(0, items.count - 1)
+            }
+            onDeleteItem(target)
+        }
+    }
+}
+
+/// カルーセル内で動画ページが表示されている間だけ再生する小コンポーネント。
+/// 各ページが独立した AVPlayer を持つので、スワイプで別ページに移ると自動で停止する。
+private struct VideoPage: View {
+    let url: URL
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        VideoPlayer(player: player)
+            .onAppear {
+                if player == nil {
+                    let newPlayer = AVPlayer(url: url)
+                    player = newPlayer
+                    newPlayer.play()
+                }
+            }
+            .onDisappear {
+                player?.pause()
+                player = nil
+            }
     }
 }
 
