@@ -26,9 +26,16 @@ final class RoutePhoto {
     /// 静止画。写真ならその写真、動画ならポスターフレーム。ピンのサムネイル表示に使う。
     /// 縮小したコピーをアプリ内に保持する。元データをカメラロールから消しても思い出は残る。
     /// 旧バージョン（1 ピン = 1 メディア）時代のデータがここに残る。新規追加分は `media` 側へ。
+    ///
+    /// TODO: `media` が 1 件以上ある新形式ピンでは、先頭メディアの imageData がここと
+    /// `media[0].imageData` の両方に保存されていて容量を二重消費している（既存ユーザー保護のため
+    /// 旧列を残置している）。将来、新形式ピンでは本列を nil 化／削除するマイグレーションを検討する。
     @Attribute(.externalStorage) var imageData: Data
     /// 動画の本体（圧縮済みコピー）。写真の場合は nil。
     /// 既存レコードへの追加でも安全に軽量移行できるよう、追加するのはこのオプショナル列だけにしている。
+    ///
+    /// TODO: `media` が非空のピンでは `imageData` と同様に重複保存になりがち（動画は容量が大きい）。
+    /// `imageData` と一緒に整理する想定。
     @Attribute(.externalStorage) var videoData: Data?
     var createdDate: Date
     var caption: String?

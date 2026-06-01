@@ -739,6 +739,10 @@ struct RouteDetailView: View {
         }
         try? modelContext.save()
 
+        // 旧データを legacy 昇格させたケースなど、representative が同じ画像でもキャッシュキー側で
+        // 連動できないことがあるので、追記後は無条件に当該ピンのサムネだけ生成し直す。
+        refreshThumbnail(for: pin)
+
         notifyMediaSaveSuccess()
 
         return pin.allMedia
@@ -755,6 +759,8 @@ struct RouteDetailView: View {
         case .modern(let media):
             modelContext.delete(media)
             try? modelContext.save()
+            // 代表メディア（sortOrder: 0）が消えると地図ピンに古いサムネが残るので、削除のたびに更新する。
+            refreshThumbnail(for: pin)
         }
     }
 
@@ -773,6 +779,19 @@ struct RouteDetailView: View {
             }
         }
         photoThumbnails = thumbnails
+    }
+
+    /// 1 ピンぶんのサムネだけを `representative` から再生成する。
+    /// 全件再構築の `rebuildPhotoThumbnails` は `onAppear` 用、こちらは個別更新用。
+    private func refreshThumbnail(for pin: RoutePhoto) {
+        guard
+            let image = UIImage(data: pin.representative.imageData),
+            let thumbnail = downscale(image, maxDimension: 160)
+        else {
+            photoThumbnails[pin.id] = nil
+            return
+        }
+        photoThumbnails[pin.id] = thumbnail
     }
 
     /// 長辺が maxDimension を超える場合のみ縮小する。それ以下はそのまま返す。
