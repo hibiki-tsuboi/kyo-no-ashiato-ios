@@ -251,6 +251,9 @@ struct RouteDetailView: View {
                 },
                 onPinEmptied: {
                     deletePin(photo)
+                },
+                onAddMedia: { items in
+                    await addMedia(items, to: photo)
                 }
             )
         }
@@ -691,6 +694,53 @@ struct RouteDetailView: View {
         return url
     }
 
+    /// 既存ピンへ複数メディアを追記する。
+    /// - 旧データ（`pin.media` が空）に追加する場合は、まずレガシー列の内容を
+    ///   `sortOrder: 0` の `RouteMedia` として「昇格」させてから、追加分を続けて並べる。
+    ///   こうしないと、追加後に `allMedia` が `media` 配列だけを参照して、旧データが見えなくなる。
+    /// - 戻り値は追記後の `pin.allMedia`。カルーセル側はこれでローカルスナップショットを差し替える。
+    private func addMedia(_ items: [PhotosPickerItem], to pin: RoutePhoto) async -> [MediaItem] {
+        var prepared: [PreparedMedia] = []
+        for item in items {
+            let isVideo = item.supportedContentTypes.contains { $0.conforms(to: .movie) }
+            if isVideo {
+                if let p = await prepareVideo(item) { prepared.append(p) }
+            } else {
+                if let p = await preparePhoto(item) { prepared.append(p) }
+            }
+        }
+        guard !prepared.isEmpty else { return pin.allMedia }
+
+        // 旧データを RouteMedia(sortOrder: 0) に昇格。
+        // `pin.imageData` / `videoData` 自体は互換性のため残しておく（pin.allMedia は
+        // `media` が非空ならそちらを優先するので、重複表示にはならない）。
+        if pin.media.isEmpty {
+            let legacy = RouteMedia(
+                imageData: pin.imageData,
+                videoData: pin.videoData,
+                sortOrder: 0
+            )
+            modelContext.insert(legacy)
+            legacy.photo = pin
+        }
+
+        let startOrder = (pin.media.map(\.sortOrder).max() ?? -1) + 1
+        for (i, p) in prepared.enumerated() {
+            let media = RouteMedia(
+                imageData: p.imageData,
+                videoData: p.videoData,
+                sortOrder: startOrder + i
+            )
+            modelContext.insert(media)
+            media.photo = pin
+        }
+        try? modelContext.save()
+
+        notifyMediaSaveSuccess()
+
+        return pin.allMedia
+    }
+
     /// カルーセル内で個別メディアを削除する。
     /// - レガシー（旧 1 対 1 のピン本体）を消す場合はピンごと削除する。
     /// - 新形式の RouteMedia 1 件を消す場合はそれだけ削除し、ピンは残す。
@@ -843,6 +893,8 @@ private struct MediaCarouselView: View {
     let onDeleteItem: (MediaItem) -> Void
     /// 最後の 1 件を削除して空になった場合の通知。呼び出し側はピンごと削除する。
     let onPinEmptied: () -> Void
+    /// このピンに対する追記依頼。呼び出し側で保存処理を行い、追記後の `allMedia` を返す。
+    let onAddMedia: ([PhotosPickerItem]) async -> [MediaItem]
 
     @Environment(\.dismiss) private var dismiss
     /// ピン本体の `allMedia` をオープン時に固定して保持するローカルスナップショット。
@@ -851,6 +903,9 @@ private struct MediaCarouselView: View {
     @State private var hasLoaded = false
     @State private var currentIndex = 0
     @State private var isConfirmingDelete = false
+    @State private var pickerItems: [PhotosPickerItem] = []
+    @State private var isPickerPresented = false
+    @State private var isAddingMedia = false
 
     private var safeIndex: Int {
         guard !items.isEmpty else { return 0 }
@@ -888,12 +943,25 @@ private struct MediaCarouselView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        isPickerPresented = true
+                    } label: {
+                        if isAddingMedia {
+                            ProgressView().controlSize(.small).tint(.white)
+                        } else {
+                            Image(systemName: "photo.badge.plus")
+                        }
+                    }
+                    .disabled(isAddingMedia)
+                    .accessibilityLabel("写真・動画を追加")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button(role: .destructive) {
                         isConfirmingDelete = true
                     } label: {
                         Image(systemName: "trash")
                     }
-                    .disabled(items.isEmpty)
+                    .disabled(items.isEmpty || isAddingMedia)
                 }
             }
             .alert(deleteAlertTitle, isPresented: $isConfirmingDelete) {
@@ -901,6 +969,18 @@ private struct MediaCarouselView: View {
                 Button("キャンセル", role: .cancel) {}
             } message: {
                 Text("削除すると元に戻せません。")
+            }
+            .photosPicker(
+                isPresented: $isPickerPresented,
+                selection: $pickerItems,
+                maxSelectionCount: 0,
+                matching: .any(of: [.images, .videos])
+            )
+            .onChange(of: pickerItems) { _, newItems in
+                guard !newItems.isEmpty else { return }
+                let picked = newItems
+                pickerItems = []
+                Task { await performAdd(picked) }
             }
             .onAppear {
                 guard !hasLoaded else { return }
@@ -928,6 +1008,19 @@ private struct MediaCarouselView: View {
             ContentUnavailableView("読み込めませんでした", systemImage: "photo")
                 .foregroundStyle(.white)
         }
+    }
+
+    private func performAdd(_ picked: [PhotosPickerItem]) async {
+        isAddingMedia = true
+        defer { isAddingMedia = false }
+
+        let previousCount = items.count
+        let updated = await onAddMedia(picked)
+        guard updated.count > previousCount else { return }
+
+        items = updated
+        // 追記分の先頭ページへ移動して、新しく入れたメディアが見えるようにする。
+        currentIndex = min(previousCount, max(0, items.count - 1))
     }
 
     private func performDelete() {
