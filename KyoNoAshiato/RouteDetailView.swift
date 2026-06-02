@@ -323,36 +323,53 @@ struct RouteDetailView: View {
         .disabled(cachedMapRegion == nil)
     }
 
+    @ViewBuilder
     private var photoAddButton: some View {
-        Menu {
+        if isPlacingPhoto {
+            // 「残す」モード中はメニューを開かず、押したら解除のキャンセルボタンになる。
             Button {
-                withAnimation { isPlacingPhoto = true }
+                pendingSkippedItem = nil
+                withAnimation { isPlacingPhoto = false }
             } label: {
-                Label("地図をタップして置く", systemImage: "hand.tap")
+                photoAddButtonLabel
             }
-            Button {
-                isAutoPlacePickerPresented = true
-            } label: {
-                Label("写真から自動で置く", systemImage: "sparkles")
-            }
-        } label: {
-            Group {
-                if isSavingMedia {
-                    ProgressView()
-                        .controlSize(.regular)
-                } else {
-                    Image(systemName: "photo.badge.plus")
-                        .font(.title3)
-                        .foregroundStyle(isPlacingPhoto ? .white : .primary)
+            .disabled(isSavingMedia)
+            .accessibilityLabel("残すモードを終了")
+        } else {
+            Menu {
+                Button {
+                    withAnimation { isPlacingPhoto = true }
+                } label: {
+                    Label("地図をタップして残す", systemImage: "hand.tap")
                 }
+                Button {
+                    isAutoPlacePickerPresented = true
+                } label: {
+                    Label("写真から自動で残す", systemImage: "sparkles")
+                }
+            } label: {
+                photoAddButtonLabel
             }
-            .frame(width: 44, height: 44)
-            .background(isPlacingPhoto ? AnyShapeStyle(.tint) : AnyShapeStyle(.regularMaterial))
-            .clipShape(Circle())
-            .shadow(radius: 4)
+            .disabled(isSavingMedia)
+            .accessibilityLabel("写真・動画を残す")
         }
-        .disabled(isSavingMedia)
-        .accessibilityLabel("写真・動画を追加")
+    }
+
+    private var photoAddButtonLabel: some View {
+        Group {
+            if isSavingMedia {
+                ProgressView()
+                    .controlSize(.regular)
+            } else {
+                Image(systemName: "photo.badge.plus")
+                    .font(.title3)
+                    .foregroundStyle(isPlacingPhoto ? .white : .primary)
+            }
+        }
+        .frame(width: 44, height: 44)
+        .background(isPlacingPhoto ? AnyShapeStyle(.tint) : AnyShapeStyle(.regularMaterial))
+        .clipShape(Circle())
+        .shadow(radius: 4)
     }
 
     private var savingPinPlaceholder: some View {
@@ -375,8 +392,8 @@ struct RouteDetailView: View {
         HStack(spacing: 8) {
             Image(systemName: "hand.tap.fill")
             Text(pendingSkippedItem != nil
-                 ? "この写真を置きたい場所で地図をタップ"
-                 : "写真・動画を置きたい場所で地図をタップ")
+                 ? "この写真を残したい場所で地図をタップ"
+                 : "残したい場所で地図をタップ")
                 .font(.subheadline)
             Spacer(minLength: 8)
             Button("キャンセル") {
@@ -401,7 +418,7 @@ struct RouteDetailView: View {
             HStack(spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
-                Text("位置情報なし — タップして配置 (\(skippedItems.count))")
+                Text("位置情報なし — タップして残す (\(skippedItems.count))")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
                 Spacer()
