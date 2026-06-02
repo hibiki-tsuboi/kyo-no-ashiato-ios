@@ -461,6 +461,11 @@ struct RouteDetailView: View {
                 }
 
             Button {
+                // 配置モード進行中の対象を破棄したらモードも畳む。さもないとバナーが孤児ピンを指し続ける。
+                if pendingSkippedItem?.id == item.id {
+                    pendingSkippedItem = nil
+                    withAnimation { isPlacingPhoto = false }
+                }
                 skippedItems.removeAll { $0.id == item.id }
             } label: {
                 Image(systemName: "xmark.circle.fill")
