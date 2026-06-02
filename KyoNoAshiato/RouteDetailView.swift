@@ -340,12 +340,12 @@ struct RouteDetailView: View {
                 Button {
                     withAnimation { isPlacingPhoto = true }
                 } label: {
-                    Label("地図をタップして残す", systemImage: "hand.tap")
+                    Label("写真を手動で残す", systemImage: "hand.tap")
                 }
                 Button {
                     isAutoPlacePickerPresented = true
                 } label: {
-                    Label("写真から自動で残す", systemImage: "sparkles")
+                    Label("写真を自動で残す", systemImage: "sparkles")
                 }
             } label: {
                 photoAddButtonLabel
