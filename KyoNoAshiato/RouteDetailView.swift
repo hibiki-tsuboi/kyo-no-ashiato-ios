@@ -393,7 +393,7 @@ struct RouteDetailView: View {
     private var placementBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "hand.tap.fill")
-            Text("この写真を残したい場所で地図をタップ")
+            Text("この写真を残したい場所をタップ")
                 .font(.subheadline)
             Spacer(minLength: 8)
             Button("キャンセル") {
