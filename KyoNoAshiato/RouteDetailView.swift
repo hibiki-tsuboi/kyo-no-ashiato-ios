@@ -137,7 +137,9 @@ struct RouteDetailView: View {
             .padding(.bottom, 16)
         }
         .overlay(alignment: .top) {
-            if isPlacingPhoto {
+            // スキップサムネからの個別配置時のみ、対象を思い出させるためにバナーを出す。
+            // 通常の手動モードはメニュー文言で意図が明確 + 右下ボタンが解除動作なので不要。
+            if isPlacingPhoto, pendingSkippedItem != nil {
                 placementBanner
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
@@ -340,16 +342,12 @@ struct RouteDetailView: View {
                 Button {
                     withAnimation { isPlacingPhoto = true }
                 } label: {
-                    Text("写真を手動で残す")
-                    Text("地図をタップして配置")
-                    Image(systemName: "hand.tap")
+                    Label("地図をタップして残す（手動）", systemImage: "hand.tap")
                 }
                 Button {
                     isAutoPlacePickerPresented = true
                 } label: {
-                    Text("写真を自動で残す")
-                    Text("位置情報から自動配置")
-                    Image(systemName: "sparkles")
+                    Label("写真の位置情報から残す（自動）", systemImage: "sparkles")
                 }
             } label: {
                 photoAddButtonLabel
@@ -395,9 +393,7 @@ struct RouteDetailView: View {
     private var placementBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "hand.tap.fill")
-            Text(pendingSkippedItem != nil
-                 ? "この写真を残したい場所で地図をタップ"
-                 : "残したい場所で地図をタップ")
+            Text("この写真を残したい場所で地図をタップ")
                 .font(.subheadline)
             Spacer(minLength: 8)
             Button("キャンセル") {
