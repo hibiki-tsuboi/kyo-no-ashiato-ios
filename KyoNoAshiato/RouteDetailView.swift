@@ -40,6 +40,10 @@ struct RouteDetailView: View {
     @State private var photoThumbnails: [UUID: UIImage] = [:]
     @State private var isSavingMedia = false
     @State private var savingPinCoordinate: CLLocationCoordinate2D?
+    @State private var isAutoPlacePickerPresented = false
+    @State private var autoPlacePickerItems: [PhotosPickerItem] = []
+    @State private var skippedItems: [SkippedItem] = []
+    @State private var pendingSkippedItem: SkippedItem?
 
     private var currentCoordinate: CLLocationCoordinate2D? {
         guard cachedCoords.count >= 2 else { return nil }
@@ -110,9 +114,18 @@ struct RouteDetailView: View {
                 .onTapGesture(coordinateSpace: .local) { location in
                     guard isPlacingPhoto else { return }
                     guard let coordinate = proxy.convert(location, from: .local) else { return }
-                    pendingPhotoCoordinate = coordinate
                     withAnimation { isPlacingPhoto = false }
-                    isPhotoPickerPresented = true
+                    if let skipped = pendingSkippedItem {
+                        // スキップサムネ経由：1 枚を即配置してキューから取り除く
+                        pendingSkippedItem = nil
+                        placeMedia(skipped.media, at: coordinate)
+                        skippedItems.removeAll { $0.id == skipped.id }
+                        try? modelContext.save()
+                        notifyMediaSaveSuccess()
+                    } else {
+                        pendingPhotoCoordinate = coordinate
+                        isPhotoPickerPresented = true
+                    }
                 }
             }
 
@@ -245,6 +258,20 @@ struct RouteDetailView: View {
                 await savePickedMedia(items)
             }
         }
+        .photosPicker(
+            isPresented: $isAutoPlacePickerPresented,
+            selection: $autoPlacePickerItems,
+            maxSelectionCount: 0,
+            matching: .any(of: [.images, .videos])
+        )
+        .onChange(of: autoPlacePickerItems) { _, newItems in
+            guard !newItems.isEmpty else { return }
+            let items = newItems
+            Task { @MainActor in
+                autoPlacePickerItems = []
+                await autoPlacePickedMedia(items)
+            }
+        }
         .sheet(item: $selectedPhoto) { photo in
             MediaCarouselView(
                 pin: photo,
@@ -262,6 +289,9 @@ struct RouteDetailView: View {
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 0) {
+                if !skippedItems.isEmpty {
+                    skippedItemsBanner
+                }
                 if cachedCoords.count >= 2 {
                     timeSlider
                 }
@@ -294,8 +324,17 @@ struct RouteDetailView: View {
     }
 
     private var photoAddButton: some View {
-        Button {
-            withAnimation { isPlacingPhoto = true }
+        Menu {
+            Button {
+                withAnimation { isPlacingPhoto = true }
+            } label: {
+                Label("地図をタップして置く", systemImage: "hand.tap")
+            }
+            Button {
+                isAutoPlacePickerPresented = true
+            } label: {
+                Label("写真から自動で置く", systemImage: "sparkles")
+            }
         } label: {
             Group {
                 if isSavingMedia {
@@ -335,10 +374,13 @@ struct RouteDetailView: View {
     private var placementBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "hand.tap.fill")
-            Text("写真・動画を置きたい場所で地図をタップ")
+            Text(pendingSkippedItem != nil
+                 ? "この写真を置きたい場所で地図をタップ"
+                 : "写真・動画を置きたい場所で地図をタップ")
                 .font(.subheadline)
             Spacer(minLength: 8)
             Button("キャンセル") {
+                pendingSkippedItem = nil
                 withAnimation { isPlacingPhoto = false }
             }
             .font(.subheadline.weight(.medium))
@@ -350,6 +392,69 @@ struct RouteDetailView: View {
         .shadow(radius: 4)
         .padding(.horizontal, 16)
         .padding(.top, 8)
+    }
+
+    /// 自動配置で GPS が見つからずスキップされた写真・動画を並べるバナー。
+    /// サムネタップで「この 1 枚を地図タップで置く」モードへ入る。× で破棄。
+    private var skippedItemsBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text("位置情報なし — タップして配置 (\(skippedItems.count))")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(skippedItems) { item in
+                        skippedThumbnail(item)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
+            }
+        }
+        .padding(.vertical, 6)
+        .background(.regularMaterial)
+    }
+
+    private func skippedThumbnail(_ item: SkippedItem) -> some View {
+        ZStack(alignment: .topTrailing) {
+            Image(uiImage: item.media.resizedImage)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(alignment: .bottomTrailing) {
+                    if item.media.videoData != nil {
+                        Image(systemName: "play.circle.fill")
+                            .foregroundStyle(.white, .black.opacity(0.6))
+                            .font(.caption)
+                            .padding(3)
+                    }
+                }
+                .contentShape(RoundedRectangle(cornerRadius: 8))
+                .onTapGesture {
+                    pendingSkippedItem = item
+                    withAnimation { isPlacingPhoto = true }
+                }
+
+            Button {
+                skippedItems.removeAll { $0.id == item.id }
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, .black.opacity(0.7))
+                    .font(.callout)
+            }
+            .offset(x: 6, y: -6)
+            .accessibilityLabel("この写真を破棄")
+        }
+        .frame(width: 56, height: 56)
     }
 
     private func photoPin(_ photo: RoutePhoto) -> some View {
@@ -570,11 +675,19 @@ struct RouteDetailView: View {
     // MARK: - Media
 
     /// 写真または動画を準備したあとの中間データ。1 メディア分。
-    private struct PreparedMedia {
+    fileprivate struct PreparedMedia {
         let imageData: Data
         let videoData: Data?
         /// サムネ生成に再利用するための、リサイズ済み静止画。
         let resizedImage: UIImage
+        /// EXIF / 動画メタデータから取り出した撮影位置。自動配置のフォールバック判断に使う。
+        let coordinate: CLLocationCoordinate2D?
+    }
+
+    /// 自動配置時に GPS が無くてスキップされ、サムネバナーで再配置を待つ 1 件。
+    fileprivate struct SkippedItem: Identifiable {
+        let id = UUID()
+        let media: PreparedMedia
     }
 
     private func savePickedMedia(_ items: [PhotosPickerItem]) async {
@@ -638,6 +751,63 @@ struct RouteDetailView: View {
         UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
+    /// 自動配置フロー本体。
+    /// 各メディアを prepare → GPS あり: 即 RoutePhoto を作成 / GPS なし: スキップキューに退避。
+    private func autoPlacePickedMedia(_ items: [PhotosPickerItem]) async {
+        guard !items.isEmpty else { return }
+        isSavingMedia = true
+        defer { isSavingMedia = false }
+
+        var placedAny = false
+        for item in items {
+            let isVideo = item.supportedContentTypes.contains { $0.conforms(to: .movie) }
+            let prepared: PreparedMedia?
+            if isVideo {
+                prepared = await prepareVideo(item)
+            } else {
+                prepared = await preparePhoto(item)
+            }
+            guard let media = prepared else { continue }
+
+            if let coord = media.coordinate {
+                placeMedia(media, at: coord)
+                placedAny = true
+            } else {
+                skippedItems.append(SkippedItem(media: media))
+            }
+        }
+
+        if placedAny {
+            try? modelContext.save()
+            notifyMediaSaveSuccess()
+        }
+    }
+
+    /// 1 件分の PreparedMedia を指定座標に即追加する。
+    /// 自動配置と、スキップ後のサムネバナーからの個別タップ配置の両方から呼ぶ。
+    private func placeMedia(_ media: PreparedMedia, at coordinate: CLLocationCoordinate2D) {
+        let pin = RoutePhoto(
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
+            imageData: media.imageData,
+            videoData: media.videoData
+        )
+        modelContext.insert(pin)
+        pin.route = route
+
+        let routeMedia = RouteMedia(
+            imageData: media.imageData,
+            videoData: media.videoData,
+            sortOrder: 0
+        )
+        modelContext.insert(routeMedia)
+        routeMedia.photo = pin
+
+        if let thumbnail = downscale(media.resizedImage, maxDimension: 160) {
+            photoThumbnails[pin.id] = thumbnail
+        }
+    }
+
     private func preparePhoto(_ item: PhotosPickerItem) async -> PreparedMedia? {
         guard
             let data = try? await item.loadTransferable(type: Data.self),
@@ -645,7 +815,9 @@ struct RouteDetailView: View {
             let resized = downscale(image, maxDimension: 2048),
             let jpeg = resized.jpegData(compressionQuality: 0.8)
         else { return nil }
-        return PreparedMedia(imageData: jpeg, videoData: nil, resizedImage: resized)
+        // GPS は EXIF を保ったオリジナル Data から読む。リサイズ後の JPEG には EXIF が落ちうる。
+        let coordinate = MediaLocation.extract(fromImage: data)
+        return PreparedMedia(imageData: jpeg, videoData: nil, resizedImage: resized, coordinate: coordinate)
     }
 
     private func prepareVideo(_ item: PhotosPickerItem) async -> PreparedMedia? {
@@ -659,7 +831,8 @@ struct RouteDetailView: View {
             let posterJPEG = resizedPoster.jpegData(compressionQuality: 0.8),
             let videoData = await compressedVideoData(from: asset)
         else { return nil }
-        return PreparedMedia(imageData: posterJPEG, videoData: videoData, resizedImage: resizedPoster)
+        let coordinate = await MediaLocation.extract(fromVideo: asset)
+        return PreparedMedia(imageData: posterJPEG, videoData: videoData, resizedImage: resizedPoster, coordinate: coordinate)
     }
 
     /// 動画の先頭フレームをポスター画像として取り出す。
