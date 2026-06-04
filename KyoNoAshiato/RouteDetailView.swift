@@ -37,6 +37,7 @@ struct RouteDetailView: View {
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var isPhotoPickerPresented = false
     @State private var selectedPhoto: RoutePhoto?
+    @State private var carouselPinSnapshot: [RoutePhoto] = []
     @State private var photoThumbnails: [UUID: UIImage] = [:]
     @State private var isSavingMedia = false
     @State private var savingPinCoordinate: CLLocationCoordinate2D?
@@ -54,6 +55,11 @@ struct RouteDetailView: View {
     private var currentTime: Date? {
         guard let duration = route.duration else { return nil }
         return route.startDate.addingTimeInterval(sliderValue * duration)
+    }
+
+    /// ピン横断ナビ用の並び順。撮影日時が無いピンは作成日時にフォールバックする。
+    private var sortedPhotos: [RoutePhoto] {
+        route.photos.sorted { $0.orderingDate < $1.orderingDate }
     }
 
     var body: some View {
@@ -275,17 +281,23 @@ struct RouteDetailView: View {
             }
         }
         .sheet(item: $selectedPhoto) { photo in
+            let snapshot = carouselPinSnapshot.isEmpty ? sortedPhotos : carouselPinSnapshot
+            let initialIndex = snapshot.firstIndex(where: { $0.id == photo.id }) ?? 0
             MediaCarouselView(
-                pin: photo,
+                pins: snapshot,
+                initialPinIndex: initialIndex,
                 videoURLProvider: { videoTempURL(for: $0) },
-                onDeleteItem: { item in
-                    deleteMediaItem(item, in: photo)
+                onDeleteItem: { item, pin in
+                    deleteMediaItem(item, in: pin)
                 },
-                onPinEmptied: {
-                    deletePin(photo)
+                onPinEmptied: { pin in
+                    deletePin(pin)
                 },
-                onAddMedia: { items in
-                    await addMedia(items, to: photo)
+                onAddMedia: { pin, items in
+                    await addMedia(items, to: pin)
+                },
+                onActivePinChanged: { pin in
+                    focusMap(on: pin.coordinate)
                 }
             )
         }
@@ -483,6 +495,8 @@ struct RouteDetailView: View {
         let mediaCount = photo.allMedia.count
         let representativeIsVideo = photo.representative.mediaType == .video
         return Button {
+            // タップ時点の並び順を凍結して渡す。シート中に photos が増減しても順序が揺れない。
+            carouselPinSnapshot = sortedPhotos
             selectedPhoto = photo
         } label: {
             Group {
@@ -616,6 +630,15 @@ struct RouteDetailView: View {
         }
     }
 
+    /// カルーセル内のピン切替に合わせて地図カメラをそのピンに寄せる。
+    /// シートで地図が隠れている間に位置を更新しておけば、閉じたとき自然にそのピンが中央に来る。
+    private func focusMap(on coordinate: CLLocationCoordinate2D) {
+        let span = MKCoordinateSpan(latitudeDelta: 0.005, longitudeDelta: 0.005)
+        withAnimation(.easeInOut) {
+            position = .region(MKCoordinateRegion(center: coordinate, span: span))
+        }
+    }
+
     private func startMarkerUpdateLoop() {
         markerUpdateTask?.cancel()
         markerUpdateTask = Task {
@@ -704,6 +727,8 @@ struct RouteDetailView: View {
         let resizedImage: UIImage
         /// EXIF / 動画メタデータから取り出した撮影位置。自動配置のフォールバック判断に使う。
         let coordinate: CLLocationCoordinate2D?
+        /// EXIF / 動画メタデータから取り出した撮影日時。並び順の主キーに使う。
+        let captureDate: Date?
     }
 
     /// 自動配置時に GPS が無くてスキップされ、サムネバナーで再配置を待つ 1 件。
@@ -742,11 +767,14 @@ struct RouteDetailView: View {
 
         // 1 タップで作る 1 ピン。レガシー列は先頭メディアでシードして互換性を保ち、
         // 実体は `media` に全件 RouteMedia としてぶら下げる（表示は `allMedia` 経由）。
+        // 並び順用には、選んだメディアのうち最も古い撮影日時を採用する。
+        let earliestCaptureDate = prepared.compactMap(\.captureDate).min()
         let pin = RoutePhoto(
             latitude: coordinate.latitude,
             longitude: coordinate.longitude,
             imageData: first.imageData,
-            videoData: first.videoData
+            videoData: first.videoData,
+            captureDate: earliestCaptureDate
         )
         modelContext.insert(pin)
         pin.route = route
@@ -812,7 +840,8 @@ struct RouteDetailView: View {
             latitude: coordinate.latitude,
             longitude: coordinate.longitude,
             imageData: media.imageData,
-            videoData: media.videoData
+            videoData: media.videoData,
+            captureDate: media.captureDate
         )
         modelContext.insert(pin)
         pin.route = route
@@ -837,9 +866,16 @@ struct RouteDetailView: View {
             let resized = downscale(image, maxDimension: 2048),
             let jpeg = resized.jpegData(compressionQuality: 0.8)
         else { return nil }
-        // GPS は EXIF を保ったオリジナル Data から読む。リサイズ後の JPEG には EXIF が落ちうる。
+        // GPS / 撮影日時は EXIF を保ったオリジナル Data から読む。リサイズ後の JPEG には EXIF が落ちうる。
         let coordinate = MediaLocation.extract(fromImage: data)
-        return PreparedMedia(imageData: jpeg, videoData: nil, resizedImage: resized, coordinate: coordinate)
+        let captureDate = MediaLocation.extractCaptureDate(fromImage: data)
+        return PreparedMedia(
+            imageData: jpeg,
+            videoData: nil,
+            resizedImage: resized,
+            coordinate: coordinate,
+            captureDate: captureDate
+        )
     }
 
     private func prepareVideo(_ item: PhotosPickerItem) async -> PreparedMedia? {
@@ -854,7 +890,14 @@ struct RouteDetailView: View {
             let videoData = await compressedVideoData(from: asset)
         else { return nil }
         let coordinate = await MediaLocation.extract(fromVideo: asset)
-        return PreparedMedia(imageData: posterJPEG, videoData: videoData, resizedImage: resizedPoster, coordinate: coordinate)
+        let captureDate = await MediaLocation.extractCaptureDate(fromVideo: asset)
+        return PreparedMedia(
+            imageData: posterJPEG,
+            videoData: videoData,
+            resizedImage: resizedPoster,
+            coordinate: coordinate,
+            captureDate: captureDate
+        )
     }
 
     /// 動画の先頭フレームをポスター画像として取り出す。
@@ -1100,34 +1143,52 @@ private struct ShareSheet: UIViewControllerRepresentable {
 /// ピンに紐づく複数メディアを横スワイプで閲覧するためのフルスクリーンビュー。
 /// 旧データ（`media` 空）でも `RoutePhoto.allMedia` が 1 件返してくれるので、
 /// 単体メディア時代のピンもそのまま 1 ページのカルーセルとして同じコードで表示できる。
+///
+/// さらに、複数ピンを横断する「次のピン／前のピン」ナビも担う。
+/// `pins` には親が並び順スナップショットを渡し、ビュー内で `localPins` として固定保持する。
 private struct MediaCarouselView: View {
-    /// 表示元のピン。`onAppear` で一度だけスナップショットを取り、以降ビュー内では参照しない。
-    /// pin プロパティを body から直接読まないことで、削除途中のピンに観測（observation）が
-    /// 走って `_PersistedProperty` getter で SwiftData の assert に当たるのを避ける。
-    let pin: RoutePhoto
+    /// 表示対象のピン一覧（並び順は親が決める）。`onAppear` で一度だけスナップショット化する。
+    let pins: [RoutePhoto]
+    let initialPinIndex: Int
     let videoURLProvider: (MediaItem) -> URL?
     /// 個別メディア 1 件の削除依頼。呼び出し側でレガシーか新形式かに応じた削除を行う。
-    let onDeleteItem: (MediaItem) -> Void
+    let onDeleteItem: (MediaItem, RoutePhoto) -> Void
     /// 最後の 1 件を削除して空になった場合の通知。呼び出し側はピンごと削除する。
-    let onPinEmptied: () -> Void
-    /// このピンに対する追記依頼。呼び出し側で保存処理を行い、追記後の `allMedia` を返す。
-    let onAddMedia: ([PhotosPickerItem]) async -> [MediaItem]
+    let onPinEmptied: (RoutePhoto) -> Void
+    /// 当該ピンに対する追記依頼。呼び出し側で保存処理を行い、追記後の `allMedia` を返す。
+    let onAddMedia: (RoutePhoto, [PhotosPickerItem]) async -> [MediaItem]
+    /// ピン切替時の通知。親は地図カメラをそのピンに寄せる。
+    let onActivePinChanged: (RoutePhoto) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    /// ピン本体の `allMedia` をオープン時に固定して保持するローカルスナップショット。
-    /// 削除操作はまずこの配列を更新し、そのあとに SwiftData 側を触る。
+    /// 親から渡された `pins` をオープン時に固定して保持するローカルスナップショット。
+    /// ピン削除はまずこの配列を更新し、そのあとに SwiftData 側を触る。
+    @State private var localPins: [RoutePhoto] = []
+    @State private var currentPinIndex: Int = 0
+    /// 現在ピンの `allMedia` のローカルスナップショット。
     @State private var items: [MediaItem] = []
     @State private var hasLoaded = false
-    @State private var currentIndex = 0
+    @State private var currentMediaIndex = 0
     @State private var isConfirmingDelete = false
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var isPickerPresented = false
     @State private var isAddingMedia = false
 
-    private var safeIndex: Int {
+    private var safeMediaIndex: Int {
         guard !items.isEmpty else { return 0 }
-        return min(max(currentIndex, 0), items.count - 1)
+        return min(max(currentMediaIndex, 0), items.count - 1)
     }
+
+    private var currentPin: RoutePhoto? {
+        guard !localPins.isEmpty,
+              currentPinIndex >= 0,
+              currentPinIndex < localPins.count
+        else { return nil }
+        return localPins[currentPinIndex]
+    }
+
+    private var canGoPrevPin: Bool { currentPinIndex > 0 }
+    private var canGoNextPin: Bool { currentPinIndex < localPins.count - 1 }
 
     var body: some View {
         NavigationStack {
@@ -1136,28 +1197,31 @@ private struct MediaCarouselView: View {
                     ContentUnavailableView("読み込めませんでした", systemImage: "photo")
                         .foregroundStyle(.white)
                 } else {
-                    TabView(selection: $currentIndex) {
+                    TabView(selection: $currentMediaIndex) {
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                             mediaPage(item)
                                 .tag(index)
                         }
                     }
+                    // ピン切替時に TabView の内部状態（スワイプ位置・動画プレイヤー）を確実に作り直す。
+                    .id(currentPin?.id)
                     .tabViewStyle(.page(indexDisplayMode: items.count > 1 ? .automatic : .never))
                     .indexViewStyle(.page(backgroundDisplayMode: .always))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(.black)
+            .safeAreaInset(edge: .bottom) {
+                if localPins.count > 1 {
+                    pinNavigationBar
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("閉じる") { dismiss() }
                 }
                 ToolbarItem(placement: .principal) {
-                    if items.count > 1 {
-                        Text("\(safeIndex + 1) / \(items.count)")
-                            .font(.subheadline)
-                            .foregroundStyle(.white)
-                    }
+                    pinIndicator
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -1204,15 +1268,75 @@ private struct MediaCarouselView: View {
             }
             .onAppear {
                 guard !hasLoaded else { return }
-                items = pin.allMedia
+                localPins = pins
+                currentPinIndex = min(max(initialPinIndex, 0), max(localPins.count - 1, 0))
+                loadCurrentPinMedia()
+                if let pin = currentPin {
+                    onActivePinChanged(pin)
+                }
                 hasLoaded = true
             }
         }
     }
 
+    @ViewBuilder
+    private var pinIndicator: some View {
+        VStack(spacing: 1) {
+            if localPins.count > 1 {
+                Text("\(currentPinIndex + 1) / \(localPins.count) 地点")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+            if items.count > 1 {
+                Text("\(safeMediaIndex + 1) / \(items.count) 枚")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.white)
+            }
+        }
+    }
+
+    private var pinNavigationBar: some View {
+        HStack(spacing: 0) {
+            Button {
+                navigatePin(by: -1)
+            } label: {
+                Label("前の地点", systemImage: "chevron.left")
+                    .labelStyle(.iconOnly)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(canGoPrevPin ? .white : .white.opacity(0.3))
+                    .frame(width: 56, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .disabled(!canGoPrevPin || isAddingMedia)
+            .accessibilityLabel("前の地点")
+
+            Spacer(minLength: 0)
+            Text("前後の地点")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.7))
+            Spacer(minLength: 0)
+
+            Button {
+                navigatePin(by: 1)
+            } label: {
+                Label("次の地点", systemImage: "chevron.right")
+                    .labelStyle(.iconOnly)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(canGoNextPin ? .white : .white.opacity(0.3))
+                    .frame(width: 56, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .disabled(!canGoNextPin || isAddingMedia)
+            .accessibilityLabel("次の地点")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(.black.opacity(0.5))
+    }
+
     private var deleteAlertTitle: String {
         guard !items.isEmpty else { return "" }
-        let isVideo = items[safeIndex].mediaType == .video
+        let isVideo = items[safeMediaIndex].mediaType == .video
         return isVideo ? "この動画を削除しますか？" : "この写真を削除しますか？"
     }
 
@@ -1230,44 +1354,83 @@ private struct MediaCarouselView: View {
         }
     }
 
+    private func navigatePin(by offset: Int) {
+        let newIndex = currentPinIndex + offset
+        guard newIndex >= 0, newIndex < localPins.count else { return }
+        currentPinIndex = newIndex
+        loadCurrentPinMedia()
+        if let pin = currentPin {
+            onActivePinChanged(pin)
+        }
+    }
+
+    private func loadCurrentPinMedia() {
+        guard let pin = currentPin else {
+            items = []
+            currentMediaIndex = 0
+            return
+        }
+        items = pin.allMedia
+        currentMediaIndex = 0
+    }
+
     private func performAdd(_ picked: [PhotosPickerItem]) async {
+        guard let pin = currentPin else { return }
         isAddingMedia = true
         defer { isAddingMedia = false }
 
         let previousCount = items.count
-        let updated = await onAddMedia(picked)
+        let updated = await onAddMedia(pin, picked)
         guard updated.count > previousCount else { return }
 
         items = updated
         // 追記分の先頭ページへ移動して、新しく入れたメディアが見えるようにする。
-        currentIndex = min(previousCount, max(0, items.count - 1))
+        currentMediaIndex = min(previousCount, max(0, items.count - 1))
     }
 
     private func performDelete() {
-        guard !items.isEmpty else { return }
-        let index = safeIndex
+        guard !items.isEmpty, let pin = currentPin else { return }
+        let index = safeMediaIndex
         let target = items[index]
-        let willBeLast = items.count <= 1
+        let willEmptyPin = items.count <= 1
 
-        if willBeLast {
-            // 最後の 1 件を消す場合は順序が重要：
-            // (1) ローカルの items を先に空にし、TabView の再評価から削除対象を切り離す
-            // (2) シートを閉じてビューをツリーから外す
-            // (3) その後に SwiftData の delete を実行する
-            // この順序で `pin.imageData` 等が deleted entity 上で読まれる経路をなくす。
-            items = []
-            dismiss()
-            onDeleteItem(target)
-            // .legacy の場合は onDeleteItem の中ですでにピンごと削除しているので二重 delete を避ける
+        if willEmptyPin {
+            // ピンが空になる削除：
+            // - 他にピンが残っていれば、ローカル配列からピンを外し、隣のピンへ移動してから SwiftData を触る。
+            // - 最後のピンなら、items を先に空にして dismiss してから削除を流す（観測中の entity 参照を切るため）。
+            let pinIndexToRemove = currentPinIndex
+
+            if localPins.count <= 1 {
+                items = []
+                localPins.removeAll()
+                dismiss()
+                onDeleteItem(target, pin)
+                if case .modern = target {
+                    onPinEmptied(pin)
+                }
+                return
+            }
+
+            // 隣のピンへ寄せる：末尾を削るときは前へ、それ以外は同じ index（次のピンに自然にスライド）。
+            localPins.remove(at: pinIndexToRemove)
+            if currentPinIndex >= localPins.count {
+                currentPinIndex = localPins.count - 1
+            }
+            loadCurrentPinMedia()
+            if let nextPin = currentPin {
+                onActivePinChanged(nextPin)
+            }
+
+            onDeleteItem(target, pin)
             if case .modern = target {
-                onPinEmptied()
+                onPinEmptied(pin)
             }
         } else {
             items.remove(at: index)
-            if currentIndex >= items.count {
-                currentIndex = max(0, items.count - 1)
+            if currentMediaIndex >= items.count {
+                currentMediaIndex = max(0, items.count - 1)
             }
-            onDeleteItem(target)
+            onDeleteItem(target, pin)
         }
     }
 }

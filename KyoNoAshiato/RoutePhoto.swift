@@ -38,6 +38,9 @@ final class RoutePhoto {
     /// `imageData` と一緒に整理する想定。
     @Attribute(.externalStorage) var videoData: Data?
     var createdDate: Date
+    /// 撮影日時。EXIF / 動画メタデータから取り出す。並び順の主キーに使う（無い場合は createdDate にフォールバック）。
+    /// 旧データでは nil のまま。
+    var captureDate: Date?
     var caption: String?
     var route: RouteRecord?
     /// 1 ピン複数メディア対応で追加した子コレクション。新規ピンはこちらに 1 件以上が入り、
@@ -50,7 +53,8 @@ final class RoutePhoto {
         longitude: Double,
         imageData: Data,
         videoData: Data? = nil,
-        createdDate: Date = Date()
+        createdDate: Date = Date(),
+        captureDate: Date? = nil
     ) {
         self.id = UUID()
         self.latitude = latitude
@@ -58,7 +62,13 @@ final class RoutePhoto {
         self.imageData = imageData
         self.videoData = videoData
         self.createdDate = createdDate
+        self.captureDate = captureDate
         self.caption = nil
+    }
+
+    /// 並び順の基準に使う日時。撮影日時があればそれ、無ければ作成日時にフォールバック。
+    var orderingDate: Date {
+        captureDate ?? createdDate
     }
 
     var coordinate: CLLocationCoordinate2D {
