@@ -1214,14 +1214,13 @@ private struct MediaCarouselView: View {
             .safeAreaInset(edge: .bottom) {
                 if localPins.count > 1 {
                     pinNavigationBar
+                } else if items.count > 1 {
+                    singlePinMediaIndicator
                 }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("閉じる") { dismiss() }
-                }
-                ToolbarItem(placement: .principal) {
-                    pinIndicator
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -1279,22 +1278,6 @@ private struct MediaCarouselView: View {
         }
     }
 
-    @ViewBuilder
-    private var pinIndicator: some View {
-        VStack(spacing: 1) {
-            if localPins.count > 1 {
-                Text("\(currentPinIndex + 1) / \(localPins.count) 地点")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.7))
-            }
-            if items.count > 1 {
-                Text("\(safeMediaIndex + 1) / \(items.count) 枚")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.white)
-            }
-        }
-    }
-
     private var pinNavigationBar: some View {
         HStack(spacing: 0) {
             Button {
@@ -1311,9 +1294,10 @@ private struct MediaCarouselView: View {
             .accessibilityLabel("前の地点")
 
             Spacer(minLength: 0)
-            Text("前後の地点")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.7))
+            Text("\(currentPinIndex + 1) / \(localPins.count)")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.white)
+                .monospacedDigit()
             Spacer(minLength: 0)
 
             Button {
@@ -1332,6 +1316,18 @@ private struct MediaCarouselView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
         .background(.black.opacity(0.5))
+    }
+
+    /// 単一ピンで複数メディアがあるときだけ出す控えめなページ表示。
+    /// 複数ピン時は `pinNavigationBar` 側にインジケータがあるので使わない。
+    private var singlePinMediaIndicator: some View {
+        Text("\(safeMediaIndex + 1) / \(items.count) 枚")
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.white)
+            .monospacedDigit()
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .background(.black.opacity(0.5))
     }
 
     private var deleteAlertTitle: String {
