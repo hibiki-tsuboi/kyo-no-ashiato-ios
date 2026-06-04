@@ -1214,8 +1214,6 @@ private struct MediaCarouselView: View {
             .safeAreaInset(edge: .bottom) {
                 if localPins.count > 1 {
                     pinNavigationBar
-                } else if items.count > 1 {
-                    singlePinMediaIndicator
                 }
             }
             .toolbar {
@@ -1316,18 +1314,6 @@ private struct MediaCarouselView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
         .background(.black.opacity(0.5))
-    }
-
-    /// 単一ピンで複数メディアがあるときだけ出す控えめなページ表示。
-    /// 複数ピン時は `pinNavigationBar` 側にインジケータがあるので使わない。
-    private var singlePinMediaIndicator: some View {
-        Text("\(safeMediaIndex + 1) / \(items.count) 枚")
-            .font(.caption.weight(.medium))
-            .foregroundStyle(.white)
-            .monospacedDigit()
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-            .background(.black.opacity(0.5))
     }
 
     private var deleteAlertTitle: String {
