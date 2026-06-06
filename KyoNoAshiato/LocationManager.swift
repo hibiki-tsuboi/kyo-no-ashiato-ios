@@ -9,14 +9,24 @@ import CoreLocation
 import SwiftData
 import Observation
 
+enum RecordingState {
+    case idle
+    case recording
+    case paused
+}
+
 @Observable
 final class LocationManager: NSObject {
     static let shared = LocationManager()
 
     var authorizationStatus: CLAuthorizationStatus = .notDetermined
-    var isRecording = false
+    var recordingState: RecordingState = .idle
     var currentRoute: RouteRecord?
     var currentCoordinates: [CLLocationCoordinate2D] = []
+
+    /// 互換性のため残しているフラグ。出発前は false、記録中・一時停止中はいずれも true。
+    /// 一時停止と記録中を区別したい場合は `recordingState` を見ること。
+    var isRecording: Bool { recordingState != .idle }
 
     @ObservationIgnored private let clManager = CLLocationManager()
     @ObservationIgnored private var modelContext: ModelContext?
@@ -53,12 +63,38 @@ final class LocationManager: NSObject {
             predicate: #Predicate { $0.endDate == nil }
         )
         guard let incomplete = try? modelContext.fetch(descriptor) else { return }
-        for route in incomplete {
+
+        // 一時停止中のまま終了されたルートを優先して引き継ぐ。複数あれば最新の startDate のものを採用。
+        let pausedRoutes = incomplete
+            .filter { $0.pausedAt != nil }
+            .sorted { $0.startDate > $1.startDate }
+        if let resumed = pausedRoutes.first {
+            currentRoute = resumed
+            recordingState = .paused
+            currentCoordinates = resumed.coordinates
+            lastAcceptedLocation = nil
+            // 残りの paused ルートは混乱の元なので閉じる（通常は1件しかないはずだが念のため）。
+            for stray in pausedRoutes.dropFirst() {
+                closeStrayRoute(stray)
+            }
+        }
+
+        // 一時停止状態でない未完ルートは自動的に閉じる（従来挙動）。
+        for route in incomplete where route.pausedAt == nil {
             guard route.id != currentRoute?.id else { continue }
             let lastTimestamp = route.points.map(\.timestamp).max()
             route.endDate = lastTimestamp ?? route.startDate
         }
         try? modelContext.save()
+    }
+
+    /// 復元時に競合した一時停止ルートを安全に閉じる。
+    /// pausedAt 時点を終了点とみなして endDate を確定させる（pausedDuration はそのまま）。
+    private func closeStrayRoute(_ route: RouteRecord) {
+        let pausedAt = route.pausedAt
+        route.pausedAt = nil
+        let lastTimestamp = route.points.map(\.timestamp).max()
+        route.endDate = pausedAt ?? lastTimestamp ?? route.startDate
     }
 
     func requestPermission() {
@@ -100,8 +136,9 @@ final class LocationManager: NSObject {
 
     /// 自宅設定用に現在地を1度だけ取得する。失敗時は nil を返す。
     func captureCurrentLocation(_ completion: @escaping (CLLocationCoordinate2D?) -> Void) {
-        // 記録中はすでに位置更新が流れているので、最新の位置をそのまま使う。
-        if isRecording, let coordinate = clManager.location?.coordinate {
+        // 記録中（一時停止中含む）はすでに最新位置が手元にあるはずなので、そのまま使う。
+        // ※ 一時停止中は startUpdatingLocation を止めているため、clManager.location は最後に取れた点。
+        if recordingState != .idle, let coordinate = clManager.location?.coordinate {
             completion(coordinate)
             return
         }
@@ -117,13 +154,45 @@ final class LocationManager: NSObject {
         currentRoute = route
         currentCoordinates = []
         lastAcceptedLocation = nil
-        isRecording = true
+        recordingState = .recording
+        clManager.startUpdatingLocation()
+        watchManager.sendStatus()
+    }
+
+    /// 一時停止する。GPSの位置更新を止め、再開までの時間を `pausedDuration` に加算するために
+    /// `pausedAt` を記録する。アプリが終了されても永続化されているので、起動時に状態復元できる。
+    func pauseRecording() {
+        guard recordingState == .recording, let route = currentRoute, let modelContext else { return }
+        route.pausedAt = Date()
+        try? modelContext.save()
+        clManager.stopUpdatingLocation()
+        recordingState = .paused
+        watchManager.sendStatus()
+    }
+
+    /// 再開する。一時停止していた時間を `pausedDuration` に加算してからGPS再開。
+    func resumeRecording() {
+        guard recordingState == .paused, let route = currentRoute, let modelContext else { return }
+        if let pausedAt = route.pausedAt {
+            route.pausedDuration += Date().timeIntervalSince(pausedAt)
+        }
+        route.pausedAt = nil
+        try? modelContext.save()
+        // 再開後の最初の点は一時停止前の最終点から大きく動いている可能性があるので、
+        // 速度ベースの不正点フィルタを誤発火させないために lastAcceptedLocation をリセットする。
+        lastAcceptedLocation = nil
+        recordingState = .recording
         clManager.startUpdatingLocation()
         watchManager.sendStatus()
     }
 
     func stopRecording() {
         guard let route = currentRoute, let modelContext else { return }
+        // 一時停止中に到着した場合、その時点までの休憩時間を確定させる。
+        if let pausedAt = route.pausedAt {
+            route.pausedDuration += Date().timeIntervalSince(pausedAt)
+            route.pausedAt = nil
+        }
         // ポイントが1件以下の場合、スライダーを表示できるよう末尾点を複製する
         if route.points.count == 1, let only = route.points.first {
             let dup = LocationPoint(latitude: only.latitude, longitude: only.longitude, timestamp: Date())
@@ -133,7 +202,7 @@ final class LocationManager: NSObject {
         route.endDate = Date()
         try? modelContext.save()
         clManager.stopUpdatingLocation()
-        isRecording = false
+        recordingState = .idle
         currentRoute = nil
         lastAcceptedLocation = nil
         watchManager.sendStatus()
@@ -149,6 +218,8 @@ extension LocationManager: CLLocationManagerDelegate {
         }
 
         guard let route = currentRoute, let modelContext else { return }
+        // 一時停止中に遅れて配送された位置はルートに加えない。
+        guard recordingState == .recording else { return }
         var didAddPoint = false
 
         for location in locations {

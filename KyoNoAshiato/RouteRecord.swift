@@ -49,6 +49,12 @@ final class RouteRecord {
     var endDate: Date?
     var manualTransportModeRaw: String?
 
+    /// これまでに蓄積された一時停止の合計時間（秒）。再開のたびに加算する。
+    var pausedDuration: TimeInterval = 0
+    /// 現在一時停止中ならその開始時刻、そうでなければ nil。アプリが終了されても永続化されるので、
+    /// 再起動時に「一時停止中だった旅」を復元できる。
+    var pausedAt: Date?
+
     var manualTransportMode: TransportMode? {
         get { manualTransportModeRaw.flatMap(TransportMode.init(rawValue:)) }
         set { manualTransportModeRaw = newValue?.rawValue }
@@ -96,6 +102,14 @@ final class RouteRecord {
         guard let endDate else { return nil }
         return endDate.timeIntervalSince(startDate)
     }
+
+    /// 休憩時間を除いた実質の移動時間。表示にはこちらを使う。
+    var movingDuration: TimeInterval? {
+        guard let duration else { return nil }
+        return max(0, duration - pausedDuration)
+    }
+
+    var isPaused: Bool { pausedAt != nil }
 
     var transportMode: TransportMode {
         if let manual = manualTransportMode { return manual }

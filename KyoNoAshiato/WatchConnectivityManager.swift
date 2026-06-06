@@ -41,10 +41,17 @@ final class WatchConnectivityManager: NSObject {
     }
 
     private func currentStatusPayload() -> [String: Any] {
-        let isRecording = locationManager?.isRecording ?? false
-        var payload: [String: Any] = ["isRecording": isRecording]
+        let state = locationManager?.recordingState ?? .idle
+        var payload: [String: Any] = [
+            "isRecording": state != .idle,
+            "isPaused": state == .paused
+        ]
         if let route = locationManager?.currentRoute {
             payload["startDate"] = route.startDate.timeIntervalSince1970
+            payload["pausedDuration"] = route.pausedDuration
+            if let pausedAt = route.pausedAt {
+                payload["pausedAt"] = pausedAt.timeIntervalSince1970
+            }
         }
         payload["distance"] = currentDistance()
         return payload
@@ -98,12 +105,20 @@ extension WatchConnectivityManager: WCSessionDelegate {
         guard let command = message["command"] as? String else { return }
         switch command {
         case "start":
-            if locationManager?.isRecording == false {
+            if locationManager?.recordingState == .idle {
                 locationManager?.startRecording()
             }
         case "stop":
-            if locationManager?.isRecording == true {
+            if locationManager?.recordingState != .idle {
                 locationManager?.stopRecording()
+            }
+        case "pause":
+            if locationManager?.recordingState == .recording {
+                locationManager?.pauseRecording()
+            }
+        case "resume":
+            if locationManager?.recordingState == .paused {
+                locationManager?.resumeRecording()
             }
         case "status":
             break

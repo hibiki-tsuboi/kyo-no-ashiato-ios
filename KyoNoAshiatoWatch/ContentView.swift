@@ -35,7 +35,7 @@ struct ContentView: View {
 
             Spacer(minLength: 4)
 
-            actionButton
+            actionButtons
         }
         .padding(.vertical, 4)
         .onReceive(ticker) { date in
@@ -66,41 +66,96 @@ struct ContentView: View {
 
     private var statusHeader: some View {
         HStack(spacing: 6) {
-            Image(systemName: connectivity.isRecording ? "record.circle.fill" : "figure.walk")
-                .foregroundStyle(connectivity.isRecording ? .red : .secondary)
-                .symbolEffect(.pulse, isActive: connectivity.isRecording)
-            Text(connectivity.isRecording ? "あしあと中" : "今日のあしあと")
+            Image(systemName: headerIconName)
+                .foregroundStyle(headerIconColor)
+                .symbolEffect(.pulse, isActive: connectivity.isRecording && !connectivity.isPaused)
+            Text(headerText)
                 .font(.headline)
         }
     }
 
-    private var actionButton: some View {
-        Button {
-            connectivity.toggleRecording()
-        } label: {
-            HStack {
+    private var headerIconName: String {
+        if connectivity.isPaused { return "pause.circle.fill" }
+        if connectivity.isRecording { return "record.circle.fill" }
+        return "figure.walk"
+    }
+
+    private var headerIconColor: Color {
+        if connectivity.isPaused { return .orange }
+        if connectivity.isRecording { return .red }
+        return .secondary
+    }
+
+    private var headerText: String {
+        if connectivity.isPaused { return "一時停止中" }
+        if connectivity.isRecording { return "あしあと中" }
+        return "今日のあしあと"
+    }
+
+    @ViewBuilder
+    private var actionButtons: some View {
+        if !connectivity.isRecording {
+            singleButton(
+                title: "出発",
+                systemImage: "record.circle.fill",
+                tint: .green
+            ) {
+                connectivity.toggleRecording()
+            }
+        } else {
+            HStack(spacing: 6) {
+                singleButton(
+                    title: connectivity.isPaused ? "再開" : "停止",
+                    systemImage: connectivity.isPaused ? "play.circle.fill" : "pause.circle.fill",
+                    tint: connectivity.isPaused ? .green : .orange
+                ) {
+                    connectivity.togglePause()
+                }
+                singleButton(
+                    title: "到着",
+                    systemImage: "stop.circle.fill",
+                    tint: .red
+                ) {
+                    connectivity.stopRecording()
+                }
+            }
+        }
+    }
+
+    private func singleButton(
+        title: String,
+        systemImage: String,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
                 ZStack {
-                    Image(systemName: connectivity.isRecording ? "stop.circle.fill" : "record.circle.fill")
+                    Image(systemName: systemImage)
                         .opacity(connectivity.isSending ? 0 : 1)
                     if connectivity.isSending {
                         ProgressView()
                             .tint(.white)
                     }
                 }
-                .frame(width: 20, height: 20)
-                Text(connectivity.isRecording ? "到着" : "出発")
+                .frame(width: 18, height: 18)
+                Text(title)
                     .fontWeight(.semibold)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
             .frame(maxWidth: .infinity)
         }
-        .tint(connectivity.isRecording ? .red : .green)
+        .tint(tint)
         .buttonStyle(.borderedProminent)
         .disabled(connectivity.isSending)
     }
 
     private var formattedElapsed: String {
         guard let startDate = connectivity.startDate else { return "00:00" }
-        let elapsed = max(0, now.timeIntervalSince(startDate))
+        // 一時停止中は pausedAt を「現在」とみなして経過時間を止める。
+        let referenceNow = connectivity.isPaused ? (connectivity.pausedAt ?? now) : now
+        let elapsed = max(0, referenceNow.timeIntervalSince(startDate) - connectivity.pausedDuration)
         let h = Int(elapsed) / 3600
         let m = Int(elapsed) % 3600 / 60
         let s = Int(elapsed) % 60

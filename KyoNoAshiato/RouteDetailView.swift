@@ -27,6 +27,7 @@ struct RouteDetailView: View {
     @State private var isEditingTransportMode = false
     @State private var selectedTransportMode: TransportMode = .walking
     @State private var cachedCoords: [CLLocationCoordinate2D] = []
+    @State private var cachedTimestamps: [Date] = []
     @State private var cachedTotalDistance: CLLocationDistance = 0
     @State private var cachedMapRegion: MKCoordinateRegion?
     @State private var shareItems: [Any] = []
@@ -52,9 +53,12 @@ struct RouteDetailView: View {
         return cachedCoords[min(index, cachedCoords.count - 1)]
     }
 
+    /// スライダー位置に対応する時刻。記録点の実際のタイムスタンプを使うことで、
+    /// 一時停止区間の前後でも壁掛け時計に沿って正しい時刻が表示される。
     private var currentTime: Date? {
-        guard let duration = route.duration else { return nil }
-        return route.startDate.addingTimeInterval(sliderValue * duration)
+        guard !cachedTimestamps.isEmpty else { return nil }
+        let index = Int(sliderValue * Double(cachedTimestamps.count - 1))
+        return cachedTimestamps[min(max(index, 0), cachedTimestamps.count - 1)]
     }
 
     /// ピン横断ナビ用の並び順。撮影日時が無いピンは作成日時にフォールバックする。
@@ -597,8 +601,12 @@ struct RouteDetailView: View {
                 infoItem(icon: "🏁", label: "到着", value: endDate.formatted(date: .omitted, time: .shortened))
                 Divider().frame(height: 32)
             }
-            if let duration = route.duration {
-                infoItem(icon: "⏱️", label: "所要時間", value: formatDuration(duration))
+            if let movingDuration = route.movingDuration {
+                infoItem(icon: "⏱️", label: "移動時間", value: formatDuration(movingDuration))
+                Divider().frame(height: 32)
+            }
+            if route.pausedDuration > 0 {
+                infoItem(icon: "⏸️", label: "休憩", value: formatDuration(route.pausedDuration))
                 Divider().frame(height: 32)
             }
             infoItem(
@@ -617,6 +625,7 @@ struct RouteDetailView: View {
         cachedCoords = sortedPoints.map {
             CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
         }
+        cachedTimestamps = sortedPoints.map(\.timestamp)
         cachedTotalDistance = calculateTotalDistance(from: cachedCoords)
         cachedMapRegion = calculateMapRegion(from: cachedCoords)
         markerProgress = sliderValue

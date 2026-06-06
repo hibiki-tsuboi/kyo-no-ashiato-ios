@@ -12,7 +12,10 @@ import WatchConnectivity
 @Observable
 final class WatchConnectivityManager: NSObject {
     var isRecording = false
+    var isPaused = false
     var startDate: Date?
+    var pausedDuration: TimeInterval = 0
+    var pausedAt: Date?
     var distance: Double = 0
     var isReachable = false
     var lastError: String?
@@ -37,6 +40,14 @@ final class WatchConnectivityManager: NSObject {
 
     func toggleRecording() {
         send(command: isRecording ? "stop" : "start")
+    }
+
+    func togglePause() {
+        send(command: isPaused ? "resume" : "pause")
+    }
+
+    func stopRecording() {
+        send(command: "stop")
     }
 
     func requestStatus() {
@@ -94,10 +105,21 @@ final class WatchConnectivityManager: NSObject {
         if let recording = payload["isRecording"] as? Bool {
             isRecording = recording
         }
+        if let paused = payload["isPaused"] as? Bool {
+            isPaused = paused
+        } else {
+            isPaused = false
+        }
         if let startInterval = payload["startDate"] as? TimeInterval, startInterval > 0 {
             startDate = Date(timeIntervalSince1970: startInterval)
         } else {
             startDate = nil
+        }
+        pausedDuration = payload["pausedDuration"] as? TimeInterval ?? 0
+        if let pausedAtInterval = payload["pausedAt"] as? TimeInterval, pausedAtInterval > 0 {
+            pausedAt = Date(timeIntervalSince1970: pausedAtInterval)
+        } else {
+            pausedAt = nil
         }
         if let dist = payload["distance"] as? Double {
             distance = dist

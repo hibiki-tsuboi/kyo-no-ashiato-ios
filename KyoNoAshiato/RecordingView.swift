@@ -37,10 +37,13 @@ struct RecordingView: View {
 
                 VStack(spacing: 0) {
                     if locationManager.isRecording {
-                        RecordingStatusView(route: locationManager.currentRoute)
+                        RecordingStatusView(
+                            route: locationManager.currentRoute,
+                            isPaused: locationManager.recordingState == .paused
+                        )
                             .padding(.bottom, 12)
                     }
-                    recordingButton
+                    recordingControls
                         .padding(.bottom, 48)
                 }
             }
@@ -133,26 +136,75 @@ struct RecordingView: View {
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
-    private var recordingButton: some View {
-        Button {
-            if locationManager.isRecording {
-                let route = locationManager.currentRoute
-                locationManager.stopRecording()
-                completedRoute = route
-            } else {
+    @ViewBuilder
+    private var recordingControls: some View {
+        switch locationManager.recordingState {
+        case .idle:
+            primaryButton(
+                title: "出発",
+                systemImage: "record.circle.fill",
+                color: .green
+            ) {
                 locationManager.startRecording()
             }
-        } label: {
+        case .recording:
             HStack(spacing: 12) {
-                Image(systemName: locationManager.isRecording ? "stop.circle.fill" : "record.circle.fill")
-                    .font(.title2)
-                Text(locationManager.isRecording ? "到着" : "出発")
+                primaryButton(
+                    title: "一時停止",
+                    systemImage: "pause.circle.fill",
+                    color: .orange
+                ) {
+                    locationManager.pauseRecording()
+                }
+                primaryButton(
+                    title: "到着",
+                    systemImage: "stop.circle.fill",
+                    color: .red
+                ) {
+                    let route = locationManager.currentRoute
+                    locationManager.stopRecording()
+                    completedRoute = route
+                }
+            }
+        case .paused:
+            HStack(spacing: 12) {
+                primaryButton(
+                    title: "再開",
+                    systemImage: "play.circle.fill",
+                    color: .green
+                ) {
+                    locationManager.resumeRecording()
+                }
+                primaryButton(
+                    title: "到着",
+                    systemImage: "stop.circle.fill",
+                    color: .red
+                ) {
+                    let route = locationManager.currentRoute
+                    locationManager.stopRecording()
+                    completedRoute = route
+                }
+            }
+        }
+    }
+
+    private func primaryButton(
+        title: String,
+        systemImage: String,
+        color: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.title3)
+                Text(title)
                     .font(.headline)
             }
             .foregroundStyle(.white)
-            .padding(.horizontal, 32)
-            .padding(.vertical, 16)
-            .background(locationManager.isRecording ? Color.red : Color.green)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 14)
+            .background(color)
             .clipShape(Capsule())
             .shadow(radius: 6)
         }
@@ -205,8 +257,11 @@ struct ArrivalSheet: View {
                     if let endDate = route.endDate {
                         summaryRow(icon: "🏁", label: "到着", value: endDate.formatted(date: .omitted, time: .shortened))
                     }
-                    if let duration = route.duration {
-                        summaryRow(icon: "⏱️", label: "所要時間", value: formatDuration(duration))
+                    if let movingDuration = route.movingDuration {
+                        summaryRow(icon: "⏱️", label: "移動時間", value: formatDuration(movingDuration))
+                    }
+                    if route.pausedDuration > 0 {
+                        summaryRow(icon: "⏸️", label: "休憩", value: formatDuration(route.pausedDuration))
                     }
                     summaryRow(icon: route.transportMode.emoji, label: "距離", value: formatDistance(route.totalDistance))
                 }
@@ -263,15 +318,16 @@ struct ArrivalSheet: View {
 
 struct RecordingStatusView: View {
     let route: RouteRecord?
+    let isPaused: Bool
     @State private var elapsed: TimeInterval = 0
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "record.circle.fill")
-                .foregroundStyle(.red)
-                .symbolEffect(.pulse)
-            Text("あしあと中  \(formattedElapsed)")
+            Image(systemName: isPaused ? "pause.circle.fill" : "record.circle.fill")
+                .foregroundStyle(isPaused ? .orange : .red)
+                .symbolEffect(.pulse, isActive: !isPaused)
+            Text("\(isPaused ? "一時停止中" : "あしあと中")  \(formattedElapsed)")
                 .font(.headline)
                 .monospacedDigit()
         }
@@ -281,15 +337,19 @@ struct RecordingStatusView: View {
         .clipShape(Capsule())
         .shadow(radius: 4)
         .onReceive(timer) { _ in
-            if let startDate = route?.startDate {
-                elapsed = Date().timeIntervalSince(startDate)
+            // 一時停止中は経過時間の表示を進めない（実質の移動時間に揃える）。
+            if !isPaused {
+                updateElapsed()
             }
         }
-        .onAppear {
-            if let startDate = route?.startDate {
-                elapsed = Date().timeIntervalSince(startDate)
-            }
-        }
+        .onAppear { updateElapsed() }
+        .onChange(of: isPaused) { _, _ in updateElapsed() }
+    }
+
+    private func updateElapsed() {
+        guard let route else { return }
+        let now = isPaused ? (route.pausedAt ?? Date()) : Date()
+        elapsed = max(0, now.timeIntervalSince(route.startDate) - route.pausedDuration)
     }
 
     private var formattedElapsed: String {
