@@ -82,6 +82,9 @@ struct RouteRowView: View {
             Text(route.title)
                 .font(.headline)
             HStack(spacing: 6) {
+                Text(formatRelativeDate(route.startDate))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 Text(route.startDate, style: .time)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -114,6 +117,21 @@ struct RouteRowView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    /// 今日/昨日のような相対表現を優先し、それより古いものは年月日を返す。
+    /// 当年のものは年を省略してすっきりさせる。
+    private func formatRelativeDate(_ date: Date) -> String {
+        let calendar = Calendar.current
+        let now = Date()
+        if calendar.isDateInToday(date) { return "今日" }
+        if calendar.isDateInYesterday(date) { return "昨日" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ja_JP")
+        formatter.dateFormat = calendar.isDate(date, equalTo: now, toGranularity: .year)
+            ? "M/d"
+            : "yyyy/M/d"
+        return formatter.string(from: date)
     }
 
     private func formatDistance(_ meters: Double) -> String {
