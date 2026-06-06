@@ -33,7 +33,7 @@ struct RecordingView: View {
 
                 currentLocationButton
                     .padding(.trailing, 16)
-                    .padding(.bottom, 54)
+                    .padding(.bottom, 8)
 
                 VStack(spacing: 0) {
                     if locationManager.isRecording {
@@ -44,7 +44,7 @@ struct RecordingView: View {
                             .padding(.bottom, 12)
                     }
                     recordingControls
-                        .padding(.bottom, 48)
+                        .padding(.bottom, 64)
                 }
             }
             .toolbar {
