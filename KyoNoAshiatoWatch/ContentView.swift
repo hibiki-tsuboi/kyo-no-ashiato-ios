@@ -105,7 +105,7 @@ struct ContentView: View {
         } else {
             HStack(spacing: 6) {
                 singleButton(
-                    title: connectivity.isPaused ? "再開" : "停止",
+                    title: connectivity.isPaused ? "再開" : "一時停止",
                     systemImage: connectivity.isPaused ? "play.circle.fill" : "pause.circle.fill",
                     tint: connectivity.isPaused ? .green : .orange
                 ) {

@@ -95,10 +95,10 @@ struct RouteRowView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-                if let duration = route.duration {
+                if let movingDuration = route.movingDuration {
                     Text("·")
                         .foregroundStyle(.secondary)
-                    Text(formatDuration(duration))
+                    Text(formatDuration(movingDuration))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }

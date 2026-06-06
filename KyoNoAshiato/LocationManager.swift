@@ -77,10 +77,15 @@ final class LocationManager: NSObject {
             for stray in pausedRoutes.dropFirst() {
                 closeStrayRoute(stray)
             }
+            // 復元した paused 状態を Watch にも反映する。コールドスタートなら activation 完了時にも
+            // 同期されるが、warm start で session がすでに activated の場合の保険として明示的に送る。
+            watchManager.sendStatus()
         }
 
         // 一時停止状態でない未完ルートは自動的に閉じる（従来挙動）。
-        for route in incomplete where route.pausedAt == nil {
+        // closeStrayRoute が pausedAt を nil にして endDate を確定させた stray ルートを
+        // 拾い直して上書きしないよう、endDate がまだ nil のものに限定する。
+        for route in incomplete where route.pausedAt == nil && route.endDate == nil {
             guard route.id != currentRoute?.id else { continue }
             let lastTimestamp = route.points.map(\.timestamp).max()
             route.endDate = lastTimestamp ?? route.startDate
