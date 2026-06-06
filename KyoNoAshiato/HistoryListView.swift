@@ -106,6 +106,11 @@ struct RouteRowView: View {
                 Text(formatDistance(route.totalDistance))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                if !route.photos.isEmpty {
+                    Image(systemName: "photo.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(.black)
+                }
             }
         }
         .padding(.vertical, 4)
