@@ -9,10 +9,14 @@ import CoreLocation
 import SwiftData
 import Observation
 
-enum RecordingState {
+enum RecordingState: Equatable {
     case idle
     case recording
     case paused
+}
+
+extension Notification.Name {
+    static let locationManagerRecordingDidChange = Notification.Name("locationManagerRecordingDidChange")
 }
 
 @Observable
@@ -51,8 +55,11 @@ final class LocationManager: NSObject {
     }
 
     func setup(modelContext: ModelContext) {
+        let shouldActivateWatch = self.modelContext == nil
         self.modelContext = modelContext
-        watchManager.activate()
+        if shouldActivateWatch {
+            watchManager.activate()
+        }
         recoverIncompleteRoutes()
         refreshHomeRegionMonitoring()
     }
@@ -91,6 +98,7 @@ final class LocationManager: NSObject {
             route.endDate = lastTimestamp ?? route.startDate
         }
         try? modelContext.save()
+        notifyRecordingDidChange()
     }
 
     /// 復元時に競合した一時停止ルートを安全に閉じる。
@@ -162,6 +170,7 @@ final class LocationManager: NSObject {
         recordingState = .recording
         clManager.startUpdatingLocation()
         watchManager.sendStatus()
+        notifyRecordingDidChange()
     }
 
     /// 一時停止する。GPSの位置更新を止め、再開までの時間を `pausedDuration` に加算するために
@@ -173,6 +182,7 @@ final class LocationManager: NSObject {
         clManager.stopUpdatingLocation()
         recordingState = .paused
         watchManager.sendStatus()
+        notifyRecordingDidChange()
     }
 
     /// 再開する。一時停止していた時間を `pausedDuration` に加算してからGPS再開。
@@ -189,6 +199,7 @@ final class LocationManager: NSObject {
         recordingState = .recording
         clManager.startUpdatingLocation()
         watchManager.sendStatus()
+        notifyRecordingDidChange()
     }
 
     func stopRecording() {
@@ -211,6 +222,11 @@ final class LocationManager: NSObject {
         currentRoute = nil
         lastAcceptedLocation = nil
         watchManager.sendStatus()
+        notifyRecordingDidChange()
+    }
+
+    private func notifyRecordingDidChange() {
+        NotificationCenter.default.post(name: .locationManagerRecordingDidChange, object: self)
     }
 }
 
@@ -245,6 +261,7 @@ extension LocationManager: CLLocationManagerDelegate {
         if didAddPoint {
             try? modelContext.save()
             watchManager.sendStatus()
+            notifyRecordingDidChange()
         }
     }
 

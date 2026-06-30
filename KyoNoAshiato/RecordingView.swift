@@ -12,7 +12,6 @@ import Combine
 
 struct RecordingView: View {
     @Environment(LocationManager.self) private var locationManager
-    @Environment(\.modelContext) private var modelContext
     @State private var position: MapCameraPosition = .userLocation(fallback: .automatic)
     @State private var showPermissionAlert = false
     @State private var completedRoute: RouteRecord?
@@ -73,7 +72,6 @@ struct RecordingView: View {
             }
         }
         .onAppear {
-            locationManager.setup(modelContext: modelContext)
             if locationManager.authorizationStatus == .notDetermined {
                 locationManager.requestPermission()
             }

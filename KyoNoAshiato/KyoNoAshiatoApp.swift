@@ -14,8 +14,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        // アプリが終了した状態から離脱で起こされても通知できるよう、起動時に監視を最新化する。
-        LocationManager.shared.refreshHomeRegionMonitoring()
+        LocationManager.shared.setup(modelContext: AppModelContainer.shared.mainContext)
         // 動画閲覧用に temp に書き出した中間ファイルを掃除する。再生時に必要なら再生成される。
         cleanupTemporaryMediaFiles()
         return true
@@ -40,21 +39,7 @@ struct KyoNoAshiatoApp: App {
     @State private var locationManager = LocationManager.shared
     @Environment(\.scenePhase) private var scenePhase
 
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            RouteRecord.self,
-            LocationPoint.self,
-            RoutePhoto.self,
-            RouteMedia.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
+    private let sharedModelContainer = AppModelContainer.shared
 
     var body: some Scene {
         WindowGroup {
