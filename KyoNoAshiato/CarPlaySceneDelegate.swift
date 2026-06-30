@@ -7,24 +7,24 @@
 
 import CarPlay
 import CoreLocation
+import MapKit
 import UIKit
 
 @MainActor
 final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
     private var interfaceController: CPInterfaceController?
-    private var mapViewController: CarPlayMapViewController?
     private var informationTemplate: CPInformationTemplate?
-    private var mapTemplate: CPMapTemplate?
+    private var pointOfInterestTemplate: CPPointOfInterestTemplate?
     private var recordingObserver: NSObjectProtocol?
     private var displayedRecordingState: RecordingState?
-    private var mapTemplateUnavailable = false
+    private var pointOfInterestTemplateUnavailable = false
     private let locationManager = LocationManager.shared
 
     func templateApplicationScene(
         _ templateApplicationScene: CPTemplateApplicationScene,
         didConnect interfaceController: CPInterfaceController
     ) {
-        connect(interfaceController, window: nil)
+        connect(interfaceController)
     }
 
     func templateApplicationScene(
@@ -32,10 +32,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         didConnect interfaceController: CPInterfaceController,
         to window: CPWindow
     ) {
-        let mapViewController = CarPlayMapViewController(locationManager: locationManager)
-        window.rootViewController = mapViewController
-        self.mapViewController = mapViewController
-        connect(interfaceController, window: window)
+        connect(interfaceController)
     }
 
     func templateApplicationScene(
@@ -53,7 +50,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         disconnect()
     }
 
-    private func connect(_ interfaceController: CPInterfaceController, window: CPWindow?) {
+    private func connect(_ interfaceController: CPInterfaceController) {
         self.interfaceController = interfaceController
         observeRecordingChanges()
         reloadTemplate(animated: false, force: true)
@@ -64,9 +61,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             NotificationCenter.default.removeObserver(recordingObserver)
         }
         recordingObserver = nil
-        mapViewController = nil
         informationTemplate = nil
-        mapTemplate = nil
+        pointOfInterestTemplate = nil
         displayedRecordingState = nil
         interfaceController = nil
     }
@@ -87,11 +83,13 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func refreshCarPlayUI() {
-        mapViewController?.updateRoute(animated: true)
-
         if displayedRecordingState != locationManager.recordingState {
             reloadTemplate(animated: false, force: true)
             return
+        }
+
+        if let pointOfInterestTemplate {
+            configurePointOfInterestTemplate(pointOfInterestTemplate)
         }
 
         if let informationTemplate {
@@ -103,18 +101,18 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func reloadTemplate(animated: Bool, force: Bool = false) {
         guard let interfaceController else { return }
 
-        if mapViewController != nil, !mapTemplateUnavailable {
-            mapViewController?.updateRoute(animated: false)
-            let template = makeMapTemplate()
-            mapTemplate = template
+        if !pointOfInterestTemplateUnavailable {
+            let template = pointOfInterestTemplate ?? makePointOfInterestTemplate()
+            configurePointOfInterestTemplate(template)
+            pointOfInterestTemplate = template
             displayedRecordingState = locationManager.recordingState
             interfaceController.setRootTemplate(template, animated: animated) { [weak self] success, error in
                 guard !success else { return }
                 if let error {
-                    print("CarPlay map template error: \(error.localizedDescription)")
+                    print("CarPlay point of interest template error: \(error.localizedDescription)")
                 }
                 Task { @MainActor in
-                    self?.mapTemplateUnavailable = true
+                    self?.pointOfInterestTemplateUnavailable = true
                     self?.reloadTemplate(animated: false, force: true)
                 }
             }
@@ -134,21 +132,96 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
     }
 
-    private func makeMapTemplate() -> CPMapTemplate {
-        let template = CPMapTemplate()
-        template.automaticallyHidesNavigationBar = false
-        template.hidesButtonsWithNavigationBar = false
-        template.leadingNavigationBarButtons = leadingMapButtons()
-        template.trailingNavigationBarButtons = trailingMapButtons()
-        template.mapButtons = [
-            makeMapButton(systemImage: "location.fill") { [weak self] in
-                self?.mapViewController?.centerOnUser()
-            },
-            makeMapButton(systemImage: "map.fill") { [weak self] in
-                self?.mapViewController?.centerOnRoute()
-            },
-        ]
+    private func makePointOfInterestTemplate() -> CPPointOfInterestTemplate {
+        let points = makePointsOfInterest()
+        let template = CPPointOfInterestTemplate(
+            title: "今日のあしあと",
+            pointsOfInterest: points,
+            selectedIndex: NSNotFound
+        )
+        template.pointOfInterestDelegate = self
         return template
+    }
+
+    private func configurePointOfInterestTemplate(_ template: CPPointOfInterestTemplate) {
+        let points = makePointsOfInterest()
+        template.title = "今日のあしあと"
+        template.leadingNavigationBarButtons = leadingNavigationBarButtons()
+        template.trailingNavigationBarButtons = trailingNavigationBarButtons()
+        template.setPointsOfInterest(points, selectedIndex: NSNotFound)
+    }
+
+    private func makePointsOfInterest() -> [CPPointOfInterest] {
+        let coordinates = currentCoordinates
+        guard !coordinates.isEmpty else { return [] }
+
+        var points: [CPPointOfInterest] = []
+        let summary = routeSummary
+
+        if locationManager.recordingState != .idle, let start = coordinates.first {
+            points.append(
+                makePointOfInterest(
+                    coordinate: start,
+                    title: "出発地点",
+                    subtitle: formatTime(locationManager.currentRoute?.startDate ?? Date()),
+                    summary: summary
+                )
+            )
+        }
+
+        if let latest = coordinates.last {
+            let shouldAddLatest = points.isEmpty || !isSameCoordinate(points[0].location.placemark.coordinate, latest)
+            if shouldAddLatest {
+                points.append(
+                    makePointOfInterest(
+                        coordinate: latest,
+                        title: "現在地",
+                        subtitle: stateText,
+                        summary: summary
+                    )
+                )
+            }
+        }
+
+        return Array(points.prefix(12))
+    }
+
+    private func makePointOfInterest(
+        coordinate: CLLocationCoordinate2D,
+        title: String,
+        subtitle: String?,
+        summary: String?
+    ) -> CPPointOfInterest {
+        let mapItem = MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
+        return CPPointOfInterest(
+            location: mapItem,
+            title: title,
+            subtitle: subtitle,
+            summary: summary,
+            detailTitle: title,
+            detailSubtitle: subtitle,
+            detailSummary: summary,
+            pinImage: nil
+        )
+    }
+
+    private var currentCoordinates: [CLLocationCoordinate2D] {
+        if let route = locationManager.currentRoute {
+            let coordinates = route.coordinates
+            if !coordinates.isEmpty {
+                return coordinates
+            }
+        }
+        return locationManager.currentCoordinates
+    }
+
+    private var routeSummary: String? {
+        guard let route = locationManager.currentRoute else { return nil }
+        return "\(formatDistance(route.totalDistance)) / \(formatDuration(activeDuration(for: route)))"
+    }
+
+    private func isSameCoordinate(_ lhs: CLLocationCoordinate2D, _ rhs: CLLocationCoordinate2D) -> Bool {
+        abs(lhs.latitude - rhs.latitude) < 0.000001 && abs(lhs.longitude - rhs.longitude) < 0.000001
     }
 
     private func makeInformationTemplate() -> CPInformationTemplate {
@@ -160,7 +233,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         )
     }
 
-    private func leadingMapButtons() -> [CPBarButton] {
+    private func leadingNavigationBarButtons() -> [CPBarButton] {
         switch locationManager.recordingState {
         case .idle:
             return []
@@ -181,7 +254,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
     }
 
-    private func trailingMapButtons() -> [CPBarButton] {
+    private func trailingNavigationBarButtons() -> [CPBarButton] {
         switch locationManager.recordingState {
         case .idle:
             return [
@@ -205,16 +278,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             }
         }
         button.buttonStyle = .rounded
-        return button
-    }
-
-    private func makeMapButton(systemImage: String, action: @escaping () -> Void) -> CPMapButton {
-        let button = CPMapButton { _ in
-            Task { @MainActor in
-                action()
-            }
-        }
-        button.image = UIImage(systemName: systemImage)
         return button
     }
 
@@ -362,5 +425,13 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 print("CarPlay alert error: \(error.localizedDescription)")
             }
         }
+    }
+}
+
+extension CarPlaySceneDelegate: CPPointOfInterestTemplateDelegate {
+    func pointOfInterestTemplate(
+        _ pointOfInterestTemplate: CPPointOfInterestTemplate,
+        didChangeMapRegion region: MKCoordinateRegion
+    ) {
     }
 }
