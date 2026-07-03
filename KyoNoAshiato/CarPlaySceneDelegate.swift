@@ -354,14 +354,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let distance = route.map { formatDistance($0.totalDistance) } ?? "-"
         let startTime = route.map { formatTime($0.startDate) } ?? "-"
         let elapsed = route.map { formatDuration(activeDuration(for: $0)) } ?? "-"
-        let pointCount = route.map { "\($0.points.count)" } ?? "-"
 
         return [
             CPInformationItem(title: "状態", detail: stateText),
             CPInformationItem(title: "開始", detail: startTime),
             CPInformationItem(title: "距離", detail: distance),
-            CPInformationItem(title: "時間", detail: elapsed),
-            CPInformationItem(title: "記録点", detail: pointCount),
+            CPInformationItem(title: "移動時間", detail: elapsed),
         ]
     }
 
@@ -455,7 +453,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         case .idle:
             return "待機中"
         case .recording:
-            return "記録中"
+            return "あしあと中"
         case .paused:
             return "一時停止中"
         }
@@ -477,10 +475,18 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func formatDuration(_ interval: TimeInterval) -> String {
-        let formatter = DateComponentsFormatter()
-        formatter.allowedUnits = interval >= 3600 ? [.hour, .minute] : [.minute, .second]
-        formatter.unitsStyle = .abbreviated
-        return formatter.string(from: interval) ?? "-"
+        let totalSeconds = max(0, Int(interval.rounded()))
+        let hours = totalSeconds / 3600
+        let minutes = totalSeconds % 3600 / 60
+        let seconds = totalSeconds % 60
+
+        if hours > 0 {
+            return "\(hours)時間 \(minutes)分"
+        }
+        if minutes > 0 {
+            return "\(minutes)分 \(seconds)秒"
+        }
+        return "\(seconds)秒"
     }
 
     private func formatTime(_ date: Date) -> String {
