@@ -151,7 +151,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         guard let interfaceController else { return }
         let content = makePointOfInterestContent()
         guard !content.points.isEmpty else {
-            presentAlert("出発後に地図を表示できます")
+            presentAlert("位置情報を取得中です")
             return
         }
 
@@ -173,7 +173,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func makePointOfInterestTemplate() -> CPPointOfInterestTemplate {
         let content = makePointOfInterestContent()
         let template = CPPointOfInterestTemplate(
-            title: "今日のあしあと",
+            title: "現在地",
             pointsOfInterest: content.points,
             selectedIndex: content.selectedIndex
         )
@@ -183,7 +183,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     private func configurePointOfInterestTemplate(_ template: CPPointOfInterestTemplate) {
         let content = makePointOfInterestContent()
-        template.title = "今日のあしあと"
+        template.title = "現在地"
         // パン操作中の「完了」など、CarPlay標準の地図UIを優先して見せる。
         template.leadingNavigationBarButtons = []
         template.trailingNavigationBarButtons = []
@@ -211,9 +211,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             return [
                 MapPoint(
                     coordinate: coordinate(for: latest),
-                    title: stateText,
-                    subtitle: "開始 \(formatTime(route.startDate))",
-                    summary: mapCurrentSummary(for: route),
+                    title: "現在地",
+                    subtitle: stateText,
+                    summary: nil,
                     isCurrent: true
                 )
             ]
@@ -223,7 +223,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             return [
                 MapPoint(
                     coordinate: latest,
-                    title: stateText,
+                    title: "現在地",
                     subtitle: nil,
                     summary: nil,
                     isCurrent: true
@@ -257,10 +257,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         )
     }
 
-    private func mapCurrentSummary(for route: RouteRecord) -> String {
-        "\(formatDistance(route.totalDistance))  \(formatCompactDuration(activeDuration(for: route)))"
-    }
-
     private func makeInformationTemplate() -> CPInformationTemplate {
         CPInformationTemplate(
             title: "今日のあしあと",
@@ -292,8 +288,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                     Task { @MainActor in
                         self?.startRecordingFromCarPlay()
                     }
-                },
-                makeMapTextButton(),
+                }
             ]
         case .recording:
             return [
@@ -329,7 +324,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func makeMapTextButton() -> CPTextButton {
-        CPTextButton(title: "地図", textStyle: .normal) { [weak self] _ in
+        CPTextButton(title: "現在地", textStyle: .normal) { [weak self] _ in
             Task { @MainActor in
                 self?.openMapTemplate()
             }
@@ -406,21 +401,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
         if minutes > 0 {
             return "\(minutes)分 \(seconds)秒"
-        }
-        return "\(seconds)秒"
-    }
-
-    private func formatCompactDuration(_ interval: TimeInterval) -> String {
-        let totalSeconds = max(0, Int(interval.rounded()))
-        let hours = totalSeconds / 3600
-        let minutes = totalSeconds % 3600 / 60
-        let seconds = totalSeconds % 60
-
-        if hours > 0 {
-            return "\(hours)時間\(minutes)分"
-        }
-        if minutes > 0 {
-            return "\(minutes)分\(seconds)秒"
         }
         return "\(seconds)秒"
     }
