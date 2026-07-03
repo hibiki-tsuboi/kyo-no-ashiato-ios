@@ -205,52 +205,27 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func makeMapPoints() -> [MapPoint] {
-        let summary = routeSummary
-
         if let route = locationManager.currentRoute {
             let sortedPoints = route.points.sorted { $0.timestamp < $1.timestamp }
-            guard let first = sortedPoints.first else { return [] }
-
-            guard sortedPoints.count >= 2, let latest = sortedPoints.last else {
-                return [
-                    MapPoint(
-                        coordinate: coordinate(for: first),
-                        title: "現在地",
-                        subtitle: stateText,
-                        summary: summary,
-                        isCurrent: true
-                    )
-                ]
-            }
-
-            let start = MapPoint(
-                coordinate: coordinate(for: first),
-                title: "出発地点",
-                subtitle: formatTime(route.startDate),
-                summary: summary,
-                isCurrent: false
-            )
-            let current = MapPoint(
-                coordinate: coordinate(for: latest),
-                title: "現在地",
-                subtitle: stateText,
-                summary: summary,
-                isCurrent: true
-            )
-
-            if isSameCoordinate(start.coordinate, current.coordinate) {
-                return [current]
-            }
-            return [start, current]
+            guard let latest = sortedPoints.last else { return [] }
+            return [
+                MapPoint(
+                    coordinate: coordinate(for: latest),
+                    title: stateText,
+                    subtitle: "開始 \(formatTime(route.startDate))",
+                    summary: mapCurrentSummary(for: route),
+                    isCurrent: true
+                )
+            ]
         }
 
         if let latest = locationManager.currentCoordinates.last {
             return [
                 MapPoint(
                     coordinate: latest,
-                    title: "現在地",
-                    subtitle: stateText,
-                    summary: summary,
+                    title: stateText,
+                    subtitle: nil,
+                    summary: nil,
                     isCurrent: true
                 )
             ]
@@ -282,13 +257,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         )
     }
 
-    private var routeSummary: String? {
-        guard let route = locationManager.currentRoute else { return nil }
-        return "\(formatDistance(route.totalDistance)) / \(formatDuration(activeDuration(for: route)))"
-    }
-
-    private func isSameCoordinate(_ lhs: CLLocationCoordinate2D, _ rhs: CLLocationCoordinate2D) -> Bool {
-        abs(lhs.latitude - rhs.latitude) < 0.000001 && abs(lhs.longitude - rhs.longitude) < 0.000001
+    private func mapCurrentSummary(for route: RouteRecord) -> String {
+        "\(formatDistance(route.totalDistance))  \(formatCompactDuration(activeDuration(for: route)))"
     }
 
     private func makeInformationTemplate() -> CPInformationTemplate {
@@ -436,6 +406,21 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
         if minutes > 0 {
             return "\(minutes)分 \(seconds)秒"
+        }
+        return "\(seconds)秒"
+    }
+
+    private func formatCompactDuration(_ interval: TimeInterval) -> String {
+        let totalSeconds = max(0, Int(interval.rounded()))
+        let hours = totalSeconds / 3600
+        let minutes = totalSeconds % 3600 / 60
+        let seconds = totalSeconds % 60
+
+        if hours > 0 {
+            return "\(hours)時間\(minutes)分"
+        }
+        if minutes > 0 {
+            return "\(minutes)分\(seconds)秒"
         }
         return "\(seconds)秒"
     }
