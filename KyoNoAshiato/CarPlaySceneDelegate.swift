@@ -17,10 +17,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var pointOfInterestTemplate: CPPointOfInterestTemplate?
     private var recordingObserver: NSObjectProtocol?
     private var refreshTimer: Timer?
-    private var selectedMapPinKind: MapPinKind = .current
     private let locationManager = LocationManager.shared
 
-    private enum MapPinKind: String {
+    private enum MapPinKind {
         case start
         case current
     }
@@ -80,7 +79,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         informationTemplate = nil
         pointOfInterestTemplate = nil
         interfaceController = nil
-        selectedMapPinKind = .current
     }
 
     private func observeRecordingChanges() {
@@ -157,7 +155,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     private func openMapTemplate() {
         guard let interfaceController else { return }
-        selectedMapPinKind = .current
         let content = makePointOfInterestContent()
         guard !content.points.isEmpty else {
             presentAlert("位置情報を取得中です")
@@ -210,9 +207,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 pinKind: point.pinKind
             )
         }
-        let selectedIndex = mapPoints.firstIndex { $0.pinKind == selectedMapPinKind }
-            ?? mapPoints.firstIndex { $0.isCurrent }
-            ?? NSNotFound
+        let selectedIndex = mapPoints.firstIndex { $0.isCurrent } ?? NSNotFound
         return (points, selectedIndex)
     }
 
@@ -289,7 +284,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         pinKind: MapPinKind
     ) -> CPPointOfInterest {
         let mapItem = MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
-        let pointOfInterest = CPPointOfInterest(
+        return CPPointOfInterest(
             location: mapItem,
             title: title,
             subtitle: subtitle,
@@ -300,8 +295,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             pinImage: makePinImage(for: pinKind, selected: false),
             selectedPinImage: makePinImage(for: pinKind, selected: true)
         )
-        pointOfInterest.userInfo = pinKind.rawValue
-        return pointOfInterest
     }
 
     private func makePinImage(for pinKind: MapPinKind, selected: Bool) -> UIImage? {
@@ -525,22 +518,5 @@ extension CarPlaySceneDelegate: CPPointOfInterestTemplateDelegate {
         _ pointOfInterestTemplate: CPPointOfInterestTemplate,
         didChangeMapRegion region: MKCoordinateRegion
     ) {
-    }
-
-    func pointOfInterestTemplate(
-        _ pointOfInterestTemplate: CPPointOfInterestTemplate,
-        didSelectPointOfInterest pointOfInterest: CPPointOfInterest
-    ) {
-        guard
-            let rawPinKind = pointOfInterest.userInfo as? String,
-            let pinKind = MapPinKind(rawValue: rawPinKind)
-        else {
-            return
-        }
-
-        selectedMapPinKind = pinKind
-        if let selectedIndex = pointOfInterestTemplate.pointsOfInterest.firstIndex(where: { $0 === pointOfInterest }) {
-            pointOfInterestTemplate.selectedIndex = selectedIndex
-        }
     }
 }
