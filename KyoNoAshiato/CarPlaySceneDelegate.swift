@@ -19,12 +19,18 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var refreshTimer: Timer?
     private let locationManager = LocationManager.shared
 
+    private enum MapPinKind {
+        case start
+        case current
+    }
+
     private struct MapPoint {
         let coordinate: CLLocationCoordinate2D
         let title: String
         let subtitle: String?
         let summary: String?
         let isCurrent: Bool
+        let pinKind: MapPinKind
     }
 
     func templateApplicationScene(
@@ -197,7 +203,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 coordinate: point.coordinate,
                 title: point.title,
                 subtitle: point.subtitle,
-                summary: point.summary
+                summary: point.summary,
+                pinKind: point.pinKind
             )
         }
         let selectedIndex = mapPoints.firstIndex { $0.isCurrent } ?? NSNotFound
@@ -207,16 +214,42 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func makeMapPoints() -> [MapPoint] {
         if let route = locationManager.currentRoute {
             let sortedPoints = route.points.sorted { $0.timestamp < $1.timestamp }
-            guard let latest = sortedPoints.last else { return [] }
-            return [
-                MapPoint(
-                    coordinate: coordinate(for: latest),
-                    title: "現在地",
-                    subtitle: stateText,
-                    summary: nil,
-                    isCurrent: true
-                )
-            ]
+            guard let first = sortedPoints.first else { return [] }
+
+            guard sortedPoints.count >= 2, let latest = sortedPoints.last else {
+                return [
+                    MapPoint(
+                        coordinate: coordinate(for: first),
+                        title: "現在地",
+                        subtitle: stateText,
+                        summary: nil,
+                        isCurrent: true,
+                        pinKind: .current
+                    )
+                ]
+            }
+
+            let start = MapPoint(
+                coordinate: coordinate(for: first),
+                title: "出発地点",
+                subtitle: formatTime(route.startDate),
+                summary: nil,
+                isCurrent: false,
+                pinKind: .start
+            )
+            let current = MapPoint(
+                coordinate: coordinate(for: latest),
+                title: "現在地",
+                subtitle: stateText,
+                summary: nil,
+                isCurrent: true,
+                pinKind: .current
+            )
+
+            if isSameCoordinate(start.coordinate, current.coordinate) {
+                return [current]
+            }
+            return [start, current]
         }
 
         if let latest = locationManager.currentCoordinates.last {
@@ -226,12 +259,17 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                     title: "現在地",
                     subtitle: nil,
                     summary: nil,
-                    isCurrent: true
+                    isCurrent: true,
+                    pinKind: .current
                 )
             ]
         }
 
         return []
+    }
+
+    private func isSameCoordinate(_ lhs: CLLocationCoordinate2D, _ rhs: CLLocationCoordinate2D) -> Bool {
+        abs(lhs.latitude - rhs.latitude) < 0.000001 && abs(lhs.longitude - rhs.longitude) < 0.000001
     }
 
     private func coordinate(for point: LocationPoint) -> CLLocationCoordinate2D {
@@ -242,7 +280,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         coordinate: CLLocationCoordinate2D,
         title: String,
         subtitle: String?,
-        summary: String?
+        summary: String?,
+        pinKind: MapPinKind
     ) -> CPPointOfInterest {
         let mapItem = MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
         return CPPointOfInterest(
@@ -253,8 +292,47 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             detailTitle: title,
             detailSubtitle: subtitle,
             detailSummary: summary,
-            pinImage: nil
+            pinImage: makePinImage(for: pinKind, selected: false),
+            selectedPinImage: makePinImage(for: pinKind, selected: true)
         )
+    }
+
+    private func makePinImage(for pinKind: MapPinKind, selected: Bool) -> UIImage? {
+        guard pinKind == .current else { return nil }
+
+        let size = selected ? CPPointOfInterest.selectedPinImageSize : CPPointOfInterest.pinImageSize
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { _ in
+            let diameter = min(size.width, size.height) * (selected ? 0.62 : 0.52)
+            let circleRect = CGRect(
+                x: (size.width - diameter) / 2,
+                y: (size.height - diameter) / 2,
+                width: diameter,
+                height: diameter
+            )
+
+            if selected {
+                UIColor.systemBlue.withAlphaComponent(0.22).setFill()
+                let haloDiameter = min(size.width, size.height) * 0.9
+                let haloRect = CGRect(
+                    x: (size.width - haloDiameter) / 2,
+                    y: (size.height - haloDiameter) / 2,
+                    width: haloDiameter,
+                    height: haloDiameter
+                )
+                UIBezierPath(ovalIn: haloRect).fill()
+            }
+
+            UIColor.systemBlue.setFill()
+            UIBezierPath(ovalIn: circleRect).fill()
+
+            UIColor.white.setStroke()
+            let lineWidth = max(2, diameter * 0.1)
+            let strokeRect = circleRect.insetBy(dx: lineWidth / 2, dy: lineWidth / 2)
+            let path = UIBezierPath(ovalIn: strokeRect)
+            path.lineWidth = lineWidth
+            path.stroke()
+        }
     }
 
     private func makeInformationTemplate() -> CPInformationTemplate {
