@@ -17,7 +17,13 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var pointOfInterestTemplate: CPPointOfInterestTemplate?
     private var recordingObserver: NSObjectProtocol?
     private var refreshTimer: Timer?
+    private var informationActionConfiguration: InformationActionConfiguration?
     private let locationManager = LocationManager.shared
+
+    private struct InformationActionConfiguration: Equatable {
+        let recordingState: RecordingState
+        let hasMapContent: Bool
+    }
 
     private enum MapPinKind {
         case start
@@ -78,6 +84,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         recordingObserver = nil
         informationTemplate = nil
         pointOfInterestTemplate = nil
+        informationActionConfiguration = nil
         interfaceController = nil
     }
 
@@ -150,7 +157,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func configureInformationTemplate(_ template: CPInformationTemplate) {
         template.title = "今日のあしあと"
         template.items = makeInformationItems()
-        template.actions = makeActions()
+        let actionConfiguration = makeInformationActionConfiguration()
+        if actionConfiguration != informationActionConfiguration {
+            template.actions = makeActions(for: actionConfiguration)
+            informationActionConfiguration = actionConfiguration
+        }
     }
 
     private func openMapTemplate() {
@@ -358,8 +369,19 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         ]
     }
 
+    private func makeInformationActionConfiguration() -> InformationActionConfiguration {
+        InformationActionConfiguration(
+            recordingState: locationManager.recordingState,
+            hasMapContent: hasMapContent
+        )
+    }
+
     private func makeActions() -> [CPTextButton] {
-        switch locationManager.recordingState {
+        makeActions(for: makeInformationActionConfiguration())
+    }
+
+    private func makeActions(for configuration: InformationActionConfiguration) -> [CPTextButton] {
+        switch configuration.recordingState {
         case .idle:
             return [
                 CPTextButton(title: "出発", textStyle: .confirm) { [weak self] _ in
@@ -369,7 +391,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 }
             ]
         case .recording:
-            return [
+            var actions = [
                 CPTextButton(title: "一時停止", textStyle: .normal) { [weak self] _ in
                     Task { @MainActor in
                         self?.locationManager.pauseRecording()
@@ -381,10 +403,13 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                         self?.stopRecordingFromCarPlay()
                     }
                 },
-                makeMapTextButton(),
             ]
+            if configuration.hasMapContent {
+                actions.append(makeMapTextButton())
+            }
+            return actions
         case .paused:
-            return [
+            var actions = [
                 CPTextButton(title: "再開", textStyle: .confirm) { [weak self] _ in
                     Task { @MainActor in
                         self?.locationManager.resumeRecording()
@@ -396,8 +421,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                         self?.stopRecordingFromCarPlay()
                     }
                 },
-                makeMapTextButton(),
             ]
+            if configuration.hasMapContent {
+                actions.append(makeMapTextButton())
+            }
+            return actions
         }
     }
 
@@ -407,6 +435,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 self?.openMapTemplate()
             }
         }
+    }
+
+    private var hasMapContent: Bool {
+        !makeMapPoints().isEmpty
     }
 
     private func startRecordingFromCarPlay() {
