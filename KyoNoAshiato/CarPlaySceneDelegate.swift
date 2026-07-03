@@ -16,9 +16,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var informationTemplate: CPInformationTemplate?
     private var pointOfInterestTemplate: CPPointOfInterestTemplate?
     private var recordingObserver: NSObjectProtocol?
-    private var displayedRecordingState: RecordingState?
-    private var pointOfInterestTemplateUnavailable = false
     private let locationManager = LocationManager.shared
+
+    private struct MapPoint {
+        let coordinate: CLLocationCoordinate2D
+        let title: String
+        let subtitle: String?
+        let summary: String?
+        let isCurrent: Bool
+    }
 
     func templateApplicationScene(
         _ templateApplicationScene: CPTemplateApplicationScene,
@@ -63,7 +69,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         recordingObserver = nil
         informationTemplate = nil
         pointOfInterestTemplate = nil
-        displayedRecordingState = nil
         interfaceController = nil
     }
 
@@ -83,47 +88,24 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func refreshCarPlayUI() {
-        if displayedRecordingState != locationManager.recordingState {
+        guard let informationTemplate else {
             reloadTemplate(animated: false, force: true)
             return
         }
 
+        configureInformationTemplate(informationTemplate)
+
         if let pointOfInterestTemplate {
             configurePointOfInterestTemplate(pointOfInterestTemplate)
-        }
-
-        if let informationTemplate {
-            informationTemplate.items = makeInformationItems()
-            informationTemplate.actions = makeActions()
         }
     }
 
     private func reloadTemplate(animated: Bool, force: Bool = false) {
         guard let interfaceController else { return }
 
-        if !pointOfInterestTemplateUnavailable {
-            let template = pointOfInterestTemplate ?? makePointOfInterestTemplate()
-            configurePointOfInterestTemplate(template)
-            pointOfInterestTemplate = template
-            displayedRecordingState = locationManager.recordingState
-            interfaceController.setRootTemplate(template, animated: animated) { [weak self] success, error in
-                guard !success else { return }
-                if let error {
-                    print("CarPlay point of interest template error: \(error.localizedDescription)")
-                }
-                Task { @MainActor in
-                    self?.pointOfInterestTemplateUnavailable = true
-                    self?.reloadTemplate(animated: false, force: true)
-                }
-            }
-            return
-        }
-
         let template = informationTemplate ?? makeInformationTemplate()
-        template.items = makeInformationItems()
-        template.actions = makeActions()
+        configureInformationTemplate(template)
         informationTemplate = template
-        displayedRecordingState = locationManager.recordingState
         guard force || interfaceController.rootTemplate !== template else { return }
         interfaceController.setRootTemplate(template, animated: animated) { success, error in
             if !success, let error {
@@ -132,58 +114,154 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
     }
 
+    private func configureInformationTemplate(_ template: CPInformationTemplate) {
+        template.title = "今日のあしあと"
+        template.items = makeInformationItems()
+        template.actions = makeActions()
+    }
+
+    private func openMapTemplate() {
+        guard let interfaceController else { return }
+        let content = makePointOfInterestContent()
+        guard !content.points.isEmpty else {
+            presentAlert("出発後に地図を表示できます")
+            return
+        }
+
+        let template = pointOfInterestTemplate ?? makePointOfInterestTemplate()
+        configurePointOfInterestTemplate(template)
+        pointOfInterestTemplate = template
+
+        if let topTemplate = interfaceController.topTemplate, topTemplate === template {
+            return
+        }
+
+        interfaceController.pushTemplate(template, animated: true) { success, error in
+            if !success, let error {
+                print("CarPlay map push error: \(error.localizedDescription)")
+            }
+        }
+    }
+
     private func makePointOfInterestTemplate() -> CPPointOfInterestTemplate {
-        let points = makePointsOfInterest()
+        let content = makePointOfInterestContent()
         let template = CPPointOfInterestTemplate(
             title: "今日のあしあと",
-            pointsOfInterest: points,
-            selectedIndex: NSNotFound
+            pointsOfInterest: content.points,
+            selectedIndex: content.selectedIndex
         )
         template.pointOfInterestDelegate = self
         return template
     }
 
     private func configurePointOfInterestTemplate(_ template: CPPointOfInterestTemplate) {
-        let points = makePointsOfInterest()
+        let content = makePointOfInterestContent()
         template.title = "今日のあしあと"
         template.leadingNavigationBarButtons = leadingNavigationBarButtons()
         template.trailingNavigationBarButtons = trailingNavigationBarButtons()
-        template.setPointsOfInterest(points, selectedIndex: NSNotFound)
+        template.setPointsOfInterest(content.points, selectedIndex: content.selectedIndex)
     }
 
-    private func makePointsOfInterest() -> [CPPointOfInterest] {
-        let coordinates = currentCoordinates
-        guard !coordinates.isEmpty else { return [] }
-
-        var points: [CPPointOfInterest] = []
-        let summary = routeSummary
-
-        if locationManager.recordingState != .idle, let start = coordinates.first {
-            points.append(
-                makePointOfInterest(
-                    coordinate: start,
-                    title: "出発地点",
-                    subtitle: formatTime(locationManager.currentRoute?.startDate ?? Date()),
-                    summary: summary
-                )
+    private func makePointOfInterestContent() -> (points: [CPPointOfInterest], selectedIndex: Int) {
+        let mapPoints = makeMapPoints()
+        let points = mapPoints.map { point in
+            makePointOfInterest(
+                coordinate: point.coordinate,
+                title: point.title,
+                subtitle: point.subtitle,
+                summary: point.summary
             )
         }
+        let selectedIndex = mapPoints.firstIndex { $0.isCurrent } ?? NSNotFound
+        return (points, selectedIndex)
+    }
 
-        if let latest = coordinates.last {
-            let shouldAddLatest = points.isEmpty || !isSameCoordinate(points[0].location.placemark.coordinate, latest)
-            if shouldAddLatest {
-                points.append(
-                    makePointOfInterest(
-                        coordinate: latest,
+    private func makeMapPoints() -> [MapPoint] {
+        let summary = routeSummary
+
+        if let route = locationManager.currentRoute {
+            let sortedPoints = route.points.sorted { $0.timestamp < $1.timestamp }
+            guard let first = sortedPoints.first else { return [] }
+
+            guard sortedPoints.count >= 2, let latest = sortedPoints.last else {
+                return [
+                    MapPoint(
+                        coordinate: coordinate(for: first),
                         title: "現在地",
                         subtitle: stateText,
-                        summary: summary
+                        summary: summary,
+                        isCurrent: true
                     )
+                ]
+            }
+
+            let start = MapPoint(
+                coordinate: coordinate(for: first),
+                title: "出発地点",
+                subtitle: formatTime(route.startDate),
+                summary: summary,
+                isCurrent: false
+            )
+            let current = MapPoint(
+                coordinate: coordinate(for: latest),
+                title: "現在地",
+                subtitle: stateText,
+                summary: summary,
+                isCurrent: true
+            )
+            let intermediate = sampledIntermediatePoints(
+                Array(sortedPoints.dropFirst().dropLast()),
+                maxCount: 10
+            ).enumerated().map { index, point in
+                MapPoint(
+                    coordinate: coordinate(for: point),
+                    title: "通過地点 \(index + 1)",
+                    subtitle: formatTime(point.timestamp),
+                    summary: summary,
+                    isCurrent: false
                 )
             }
+
+            if isSameCoordinate(start.coordinate, current.coordinate) {
+                return [current]
+            }
+            return [start] + intermediate + [current]
         }
 
-        return Array(points.prefix(12))
+        if let latest = locationManager.currentCoordinates.last {
+            return [
+                MapPoint(
+                    coordinate: latest,
+                    title: "現在地",
+                    subtitle: stateText,
+                    summary: summary,
+                    isCurrent: true
+                )
+            ]
+        }
+
+        return []
+    }
+
+    private func coordinate(for point: LocationPoint) -> CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude)
+    }
+
+    private func sampledIntermediatePoints(_ points: [LocationPoint], maxCount: Int) -> [LocationPoint] {
+        guard maxCount > 0, points.count > maxCount else { return points }
+
+        var sampled: [LocationPoint] = []
+        var usedIndices = Set<Int>()
+        let step = Double(points.count + 1) / Double(maxCount + 1)
+
+        for sampleNumber in 1...maxCount {
+            let rawIndex = Int((Double(sampleNumber) * step).rounded()) - 1
+            let index = min(points.count - 1, max(0, rawIndex))
+            guard usedIndices.insert(index).inserted else { continue }
+            sampled.append(points[index])
+        }
+
+        return sampled
     }
 
     private func makePointOfInterest(
@@ -203,16 +281,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             detailSummary: summary,
             pinImage: nil
         )
-    }
-
-    private var currentCoordinates: [CLLocationCoordinate2D] {
-        if let route = locationManager.currentRoute {
-            let coordinates = route.coordinates
-            if !coordinates.isEmpty {
-                return coordinates
-            }
-        }
-        return locationManager.currentCoordinates
     }
 
     private var routeSummary: String? {
@@ -305,14 +373,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                     Task { @MainActor in
                         self?.startRecordingFromCarPlay()
                     }
-                }
+                },
+                makeMapTextButton(),
             ]
         case .recording:
             return [
                 CPTextButton(title: "一時停止", textStyle: .normal) { [weak self] _ in
                     Task { @MainActor in
                         self?.locationManager.pauseRecording()
-                        self?.reloadTemplate(animated: false)
+                        self?.refreshCarPlayUI()
                     }
                 },
                 CPTextButton(title: "到着", textStyle: .confirm) { [weak self] _ in
@@ -320,13 +389,14 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                         self?.stopRecordingFromCarPlay()
                     }
                 },
+                makeMapTextButton(),
             ]
         case .paused:
             return [
                 CPTextButton(title: "再開", textStyle: .confirm) { [weak self] _ in
                     Task { @MainActor in
                         self?.locationManager.resumeRecording()
-                        self?.reloadTemplate(animated: false)
+                        self?.refreshCarPlayUI()
                     }
                 },
                 CPTextButton(title: "到着", textStyle: .confirm) { [weak self] _ in
@@ -334,7 +404,16 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                         self?.stopRecordingFromCarPlay()
                     }
                 },
+                makeMapTextButton(),
             ]
+        }
+    }
+
+    private func makeMapTextButton() -> CPTextButton {
+        CPTextButton(title: "地図", textStyle: .normal) { [weak self] _ in
+            Task { @MainActor in
+                self?.openMapTemplate()
+            }
         }
     }
 
@@ -352,7 +431,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func stopRecordingFromCarPlay() {
         locationManager.stopRecording()
         refreshCarPlayUI()
-        presentAlert("あしあとを記録しました")
+        presentAlert("あしあとを記録しました", returnsToRootAfterDismiss: true)
     }
 
     private var canRecordLocation: Bool {
@@ -408,13 +487,19 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         date.formatted(date: .omitted, time: .shortened)
     }
 
-    private func presentAlert(_ title: String) {
+    private func presentAlert(_ title: String, returnsToRootAfterDismiss: Bool = false) {
         guard let interfaceController else { return }
         let close = CPAlertAction(title: "OK", style: .default) { [weak self] _ in
             Task { @MainActor in
                 self?.interfaceController?.dismissTemplate(animated: true) { success, error in
                     if !success, let error {
                         print("CarPlay alert dismiss error: \(error.localizedDescription)")
+                    }
+                    guard returnsToRootAfterDismiss else { return }
+                    self?.interfaceController?.popToRootTemplate(animated: true) { success, error in
+                        if !success, let error {
+                            print("CarPlay pop to root error: \(error.localizedDescription)")
+                        }
                     }
                 }
             }
