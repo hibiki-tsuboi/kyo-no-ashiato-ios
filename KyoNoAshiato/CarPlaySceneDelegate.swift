@@ -209,23 +209,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 summary: summary,
                 isCurrent: true
             )
-            let intermediate = sampledIntermediatePoints(
-                Array(sortedPoints.dropFirst().dropLast()),
-                maxCount: 10
-            ).enumerated().map { index, point in
-                MapPoint(
-                    coordinate: coordinate(for: point),
-                    title: "通過地点 \(index + 1)",
-                    subtitle: formatTime(point.timestamp),
-                    summary: summary,
-                    isCurrent: false
-                )
-            }
 
             if isSameCoordinate(start.coordinate, current.coordinate) {
                 return [current]
             }
-            return [start] + intermediate + [current]
+            return [start, current]
         }
 
         if let latest = locationManager.currentCoordinates.last {
@@ -245,23 +233,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     private func coordinate(for point: LocationPoint) -> CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude)
-    }
-
-    private func sampledIntermediatePoints(_ points: [LocationPoint], maxCount: Int) -> [LocationPoint] {
-        guard maxCount > 0, points.count > maxCount else { return points }
-
-        var sampled: [LocationPoint] = []
-        var usedIndices = Set<Int>()
-        let step = Double(points.count + 1) / Double(maxCount + 1)
-
-        for sampleNumber in 1...maxCount {
-            let rawIndex = Int((Double(sampleNumber) * step).rounded()) - 1
-            let index = min(points.count - 1, max(0, rawIndex))
-            guard usedIndices.insert(index).inserted else { continue }
-            sampled.append(points[index])
-        }
-
-        return sampled
     }
 
     private func makePointOfInterest(
