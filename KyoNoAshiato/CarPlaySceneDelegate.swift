@@ -298,7 +298,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                         self?.refreshCarPlayUI()
                     }
                 },
-                CPTextButton(title: "到着", textStyle: .confirm) { [weak self] _ in
+                CPTextButton(title: "到着", textStyle: .cancel) { [weak self] _ in
                     Task { @MainActor in
                         self?.stopRecordingFromCarPlay()
                     }
@@ -313,7 +313,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                         self?.refreshCarPlayUI()
                     }
                 },
-                CPTextButton(title: "到着", textStyle: .confirm) { [weak self] _ in
+                CPTextButton(title: "到着", textStyle: .cancel) { [weak self] _ in
                     Task { @MainActor in
                         self?.stopRecordingFromCarPlay()
                     }
