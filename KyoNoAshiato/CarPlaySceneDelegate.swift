@@ -16,6 +16,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var informationTemplate: CPInformationTemplate?
     private var pointOfInterestTemplate: CPPointOfInterestTemplate?
     private var recordingObserver: NSObjectProtocol?
+    private var refreshTimer: Timer?
     private let locationManager = LocationManager.shared
 
     private struct MapPoint {
@@ -60,9 +61,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         self.interfaceController = interfaceController
         observeRecordingChanges()
         reloadTemplate(animated: false, force: true)
+        updateRefreshTimer()
     }
 
     private func disconnect() {
+        stopRefreshTimer()
         if let recordingObserver {
             NotificationCenter.default.removeObserver(recordingObserver)
         }
@@ -80,14 +83,14 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             forName: .locationManagerRecordingDidChange,
             object: locationManager,
             queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
+        ) { _ in
+            Task { @MainActor [weak self] in
                 self?.refreshCarPlayUI()
             }
         }
     }
 
-    private func refreshCarPlayUI() {
+    private func refreshCarPlayUI(updatesMap: Bool = true) {
         guard let informationTemplate else {
             reloadTemplate(animated: false, force: true)
             return
@@ -95,9 +98,33 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
         configureInformationTemplate(informationTemplate)
 
-        if let pointOfInterestTemplate {
+        if updatesMap, let pointOfInterestTemplate {
             configurePointOfInterestTemplate(pointOfInterestTemplate)
         }
+
+        updateRefreshTimer()
+    }
+
+    private func updateRefreshTimer() {
+        if locationManager.recordingState == .recording {
+            startRefreshTimer()
+        } else {
+            stopRefreshTimer()
+        }
+    }
+
+    private func startRefreshTimer() {
+        guard refreshTimer == nil else { return }
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            Task { @MainActor [weak self] in
+                self?.refreshCarPlayUI(updatesMap: false)
+            }
+        }
+    }
+
+    private func stopRefreshTimer() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
     }
 
     private func reloadTemplate(animated: Bool, force: Bool = false) {
@@ -157,8 +184,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func configurePointOfInterestTemplate(_ template: CPPointOfInterestTemplate) {
         let content = makePointOfInterestContent()
         template.title = "今日のあしあと"
-        template.leadingNavigationBarButtons = leadingNavigationBarButtons()
-        template.trailingNavigationBarButtons = trailingNavigationBarButtons()
+        // パン操作中の「完了」など、CarPlay標準の地図UIを優先して見せる。
+        template.leadingNavigationBarButtons = []
+        template.trailingNavigationBarButtons = []
         template.setPointsOfInterest(content.points, selectedIndex: content.selectedIndex)
     }
 
@@ -270,54 +298,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             items: makeInformationItems(),
             actions: makeActions()
         )
-    }
-
-    private func leadingNavigationBarButtons() -> [CPBarButton] {
-        switch locationManager.recordingState {
-        case .idle:
-            return []
-        case .recording:
-            return [
-                makeBarButton(title: "一時停止") { [weak self] in
-                    self?.locationManager.pauseRecording()
-                    self?.refreshCarPlayUI()
-                }
-            ]
-        case .paused:
-            return [
-                makeBarButton(title: "再開") { [weak self] in
-                    self?.locationManager.resumeRecording()
-                    self?.refreshCarPlayUI()
-                }
-            ]
-        }
-    }
-
-    private func trailingNavigationBarButtons() -> [CPBarButton] {
-        switch locationManager.recordingState {
-        case .idle:
-            return [
-                makeBarButton(title: "出発") { [weak self] in
-                    self?.startRecordingFromCarPlay()
-                }
-            ]
-        case .recording, .paused:
-            return [
-                makeBarButton(title: "到着") { [weak self] in
-                    self?.stopRecordingFromCarPlay()
-                }
-            ]
-        }
-    }
-
-    private func makeBarButton(title: String, action: @escaping () -> Void) -> CPBarButton {
-        let button = CPBarButton(title: title) { _ in
-            Task { @MainActor in
-                action()
-            }
-        }
-        button.buttonStyle = .rounded
-        return button
     }
 
     private func makeInformationItems() -> [CPInformationItem] {
