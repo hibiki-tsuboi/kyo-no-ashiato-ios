@@ -411,8 +411,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             )
             text.draw(in: textRect, withAttributes: attributes)
             // 絵文字は黒いシルエットで地図上では重すぎるため、
-            // アルファだけ残して色をグレーに置き換える。
-            UIColor.systemGray.setFill()
+            // アルファだけ残して昼夜どちらの地図でも見える明るめのグレーに置き換える。
+            UIColor(white: 0.78, alpha: 1).setFill()
             context.fill(CGRect(origin: .zero, size: size), blendMode: .sourceIn)
         }
     }
