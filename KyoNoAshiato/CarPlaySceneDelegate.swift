@@ -554,8 +554,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func startRecordingFromCarPlay() {
-        guard canRecordLocation else {
-            requestLocationPermissionIfNeeded()
+        guard locationManager.canRecordLocation else {
+            locationManager.requestPermissionIfNeeded()
             presentAlert("iPhoneで位置情報を許可してください")
             return
         }
@@ -568,22 +568,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         locationManager.stopRecording()
         refreshCarPlayUI()
         presentAlert("あしあとを記録しました", returnsToRootAfterDismiss: true)
-    }
-
-    private var canRecordLocation: Bool {
-        switch locationManager.authorizationStatus {
-        case .authorizedAlways, .authorizedWhenInUse:
-            return true
-        case .denied, .notDetermined, .restricted:
-            return false
-        @unknown default:
-            return false
-        }
-    }
-
-    private func requestLocationPermissionIfNeeded() {
-        guard locationManager.authorizationStatus == .notDetermined else { return }
-        locationManager.requestPermission()
     }
 
     private var stateText: String {

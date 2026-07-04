@@ -88,8 +88,12 @@ extension WatchConnectivityManager: WCSessionDelegate {
 
     func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
         Task { @MainActor in
-            handleCommand(message)
-            replyHandler(currentStatusPayload())
+            let errorMessage = handleCommand(message)
+            var payload = currentStatusPayload()
+            if let errorMessage {
+                payload["error"] = errorMessage
+            }
+            replyHandler(payload)
         }
     }
 
@@ -100,12 +104,20 @@ extension WatchConnectivityManager: WCSessionDelegate {
         }
     }
 
+    /// コマンドを実行する。実行できなかった場合はユーザー向けのエラーメッセージを返し、
+    /// 呼び出し元が reply に載せて Watch 側で表示できるようにする。
     @MainActor
-    private func handleCommand(_ message: [String: Any]) {
-        guard let command = message["command"] as? String else { return }
+    @discardableResult
+    private func handleCommand(_ message: [String: Any]) -> String? {
+        guard let command = message["command"] as? String else { return nil }
         switch command {
         case "start":
             if locationManager?.recordingState == .idle {
+                // 許可がないまま開始すると空のあしあとが残るため、CarPlay と同じくガードする。
+                guard locationManager?.canRecordLocation == true else {
+                    locationManager?.requestPermissionIfNeeded()
+                    return "iPhoneで位置情報を許可してください"
+                }
                 locationManager?.startRecording()
             }
         case "stop":
@@ -125,5 +137,6 @@ extension WatchConnectivityManager: WCSessionDelegate {
         default:
             break
         }
+        return nil
     }
 }

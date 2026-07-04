@@ -114,6 +114,25 @@ final class LocationManager: NSObject {
         clManager.requestAlwaysAuthorization()
     }
 
+    /// 許可が未決定のときだけダイアログを出す。決定済みなら何もしない。
+    func requestPermissionIfNeeded() {
+        guard authorizationStatus == .notDetermined else { return }
+        requestPermission()
+    }
+
+    /// 記録を開始できる許可状態か。Watch / CarPlay などリモートからの開始要求のガードに使う。
+    /// 許可がないまま開始すると1点も記録されない空のあしあとが残ってしまう。
+    var canRecordLocation: Bool {
+        switch authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            return true
+        case .denied, .notDetermined, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
     /// 自宅を中心としたジオフェンスの監視を最新化する。アプリが終了していても、
     /// 自宅から離れるとOSが起こして `didExitRegion` を届けてくれるため、付け忘れのリマインドに使える。
     /// 自宅未設定・常時許可なしのときは監視しない。自宅変更時にも呼ぶこと。

@@ -102,6 +102,10 @@ final class WatchConnectivityManager: NSObject {
 
     @MainActor
     private func applyPayload(_ payload: [String: Any]) {
+        // 状態を正常に受け取れた時点で古いエラー表示は解除する（タイムアウト後に遅れて reply が
+        // 届いたケースや、iPhone 側でアプリが開かれて applicationContext が届いたケース）。
+        // コマンドが実行できなかった場合は reply の "error" に理由が入るので、それを表示する。
+        lastError = payload["error"] as? String
         if let recording = payload["isRecording"] as? Bool {
             isRecording = recording
         }
