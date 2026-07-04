@@ -389,12 +389,31 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 selected: selected
             )
         case .waypoint:
-            return makeDotPinImage(
-                fillColor: .systemGray,
-                diameterRatio: selected ? 0.44 : 0.34,
-                hasHalo: false,
-                selected: selected
+            return makeFootprintPinImage(selected: selected)
+        }
+    }
+
+    private func makeFootprintPinImage(selected: Bool) -> UIImage {
+        let size = selected ? CPPointOfInterest.selectedPinImageSize : CPPointOfInterest.pinImageSize
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { context in
+            let fontSize = min(size.width, size.height) * (selected ? 0.72 : 0.58)
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: fontSize)
+            ]
+            let text = "👣" as NSString
+            let textSize = text.size(withAttributes: attributes)
+            let textRect = CGRect(
+                x: (size.width - textSize.width) / 2,
+                y: (size.height - textSize.height) / 2,
+                width: textSize.width,
+                height: textSize.height
             )
+            text.draw(in: textRect, withAttributes: attributes)
+            // 絵文字は黒いシルエットで地図上では重すぎるため、
+            // アルファだけ残して色をグレーに置き換える。
+            UIColor.systemGray.setFill()
+            context.fill(CGRect(origin: .zero, size: size), blendMode: .sourceIn)
         }
     }
 
