@@ -512,7 +512,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 },
                 CPTextButton(title: "到着", textStyle: .cancel) { [weak self] _ in
                     Task { @MainActor in
-                        self?.stopRecordingFromCarPlay()
+                        self?.confirmStopRecordingFromCarPlay()
                     }
                 },
             ]
@@ -530,7 +530,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 },
                 CPTextButton(title: "到着", textStyle: .cancel) { [weak self] _ in
                     Task { @MainActor in
-                        self?.stopRecordingFromCarPlay()
+                        self?.confirmStopRecordingFromCarPlay()
                     }
                 },
             ]
@@ -565,9 +565,39 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func stopRecordingFromCarPlay() {
+        guard locationManager.currentRoute != nil else {
+            refreshCarPlayUI()
+            return
+        }
         locationManager.stopRecording()
         refreshCarPlayUI()
         presentAlert("あしあとを記録しました", returnsToRootAfterDismiss: true)
+    }
+
+    private func confirmStopRecordingFromCarPlay() {
+        guard locationManager.currentRoute != nil else {
+            refreshCarPlayUI()
+            return
+        }
+        guard let interfaceController else { return }
+        let cancel = CPAlertAction(title: "キャンセル", style: .cancel) { [weak self] _ in
+            Task { @MainActor in
+                self?.dismissPresentedTemplate()
+            }
+        }
+        let arrive = CPAlertAction(title: "到着する", style: .destructive) { [weak self] _ in
+            Task { @MainActor in
+                self?.dismissPresentedTemplate {
+                    self?.stopRecordingFromCarPlay()
+                }
+            }
+        }
+        let alert = CPAlertTemplate(titleVariants: ["到着してよいですか？"], actions: [cancel, arrive])
+        interfaceController.presentTemplate(alert, animated: true) { success, error in
+            if !success, let error {
+                print("CarPlay confirmation alert error: \(error.localizedDescription)")
+            }
+        }
     }
 
     private var stateText: String {
@@ -619,10 +649,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         guard let interfaceController else { return }
         let close = CPAlertAction(title: "OK", style: .default) { [weak self] _ in
             Task { @MainActor in
-                self?.interfaceController?.dismissTemplate(animated: true) { success, error in
-                    if !success, let error {
-                        print("CarPlay alert dismiss error: \(error.localizedDescription)")
-                    }
+                self?.dismissPresentedTemplate {
                     guard returnsToRootAfterDismiss else { return }
                     self?.interfaceController?.popToRootTemplate(animated: true) { success, error in
                         if !success, let error {
@@ -637,6 +664,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             if !success, let error {
                 print("CarPlay alert error: \(error.localizedDescription)")
             }
+        }
+    }
+
+    private func dismissPresentedTemplate(completion: (() -> Void)? = nil) {
+        interfaceController?.dismissTemplate(animated: true) { success, error in
+            if !success, let error {
+                print("CarPlay alert dismiss error: \(error.localizedDescription)")
+            }
+            completion?()
         }
     }
 }

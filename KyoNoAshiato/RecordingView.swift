@@ -14,6 +14,7 @@ struct RecordingView: View {
     @Environment(LocationManager.self) private var locationManager
     @State private var position: MapCameraPosition = .userLocation(fallback: .automatic)
     @State private var showPermissionAlert = false
+    @State private var showArrivalConfirmation = false
     @State private var completedRoute: RouteRecord?
     @State private var isHomeSet = HomeStore.shared.isConfigured
     @State private var homeMessage: String?
@@ -84,6 +85,14 @@ struct RecordingView: View {
         }
         .sheet(item: $completedRoute) { route in
             ArrivalSheet(route: route)
+        }
+        .alert("到着してよいですか？", isPresented: $showArrivalConfirmation) {
+            Button("キャンセル", role: .cancel) {}
+            Button("到着する", role: .destructive) {
+                completeArrival()
+            }
+        } message: {
+            Text("あしあとを記録します。")
         }
         .alert("位置情報の許可が必要です", isPresented: $showPermissionAlert) {
             Button("設定を開く") {
@@ -159,9 +168,7 @@ struct RecordingView: View {
                     systemImage: "stop.circle.fill",
                     color: .red
                 ) {
-                    let route = locationManager.currentRoute
-                    locationManager.stopRecording()
-                    completedRoute = route
+                    requestArrivalConfirmation()
                 }
             }
         case .paused:
@@ -178,12 +185,21 @@ struct RecordingView: View {
                     systemImage: "stop.circle.fill",
                     color: .red
                 ) {
-                    let route = locationManager.currentRoute
-                    locationManager.stopRecording()
-                    completedRoute = route
+                    requestArrivalConfirmation()
                 }
             }
         }
+    }
+
+    private func requestArrivalConfirmation() {
+        guard locationManager.currentRoute != nil else { return }
+        showArrivalConfirmation = true
+    }
+
+    private func completeArrival() {
+        guard let route = locationManager.currentRoute else { return }
+        locationManager.stopRecording()
+        completedRoute = route
     }
 
     private func primaryButton(
