@@ -11,6 +11,7 @@ import Combine
 struct ContentView: View {
     @Environment(WatchConnectivityManager.self) private var connectivity
     @State private var now = Date()
+    @State private var showArrivalConfirmation = false
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -40,6 +41,12 @@ struct ContentView: View {
         .padding(.vertical, 4)
         .onReceive(ticker) { date in
             now = date
+        }
+        .alert("到着してよいですか？", isPresented: $showArrivalConfirmation) {
+            Button("キャンセル", role: .cancel) {}
+            Button("到着する", role: .destructive) {
+                connectivity.stopRecording()
+            }
         }
     }
 
@@ -116,7 +123,7 @@ struct ContentView: View {
                     systemImage: "stop.circle.fill",
                     tint: .red
                 ) {
-                    connectivity.stopRecording()
+                    showArrivalConfirmation = true
                 }
             }
         }
