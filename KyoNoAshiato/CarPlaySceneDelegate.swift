@@ -120,7 +120,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func updateRefreshTimer() {
-        if locationManager.recordingState == .recording {
+        if locationManager.recordingState != .idle {
             startRefreshTimer()
         } else {
             stopRefreshTimer()
@@ -472,11 +472,13 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let distance = route.map { formatDistance($0.totalDistance) } ?? "-"
         let startTime = route.map { formatTime($0.startDate) } ?? "-"
         let elapsed = route.map { formatDuration(activeDuration(for: $0)) } ?? "-"
+        let paused = route.map { formatDuration(pausedDuration(for: $0)) } ?? "-"
 
         return [
             CPInformationItem(title: "状態", detail: stateText),
             CPInformationItem(title: "開始", detail: startTime),
             CPInformationItem(title: "距離", detail: distance),
+            CPInformationItem(title: "休憩時間", detail: paused),
             CPInformationItem(title: "移動時間", detail: elapsed),
         ]
     }
@@ -615,6 +617,14 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         var duration = Date().timeIntervalSince(route.startDate) - route.pausedDuration
         if let pausedAt = route.pausedAt {
             duration -= Date().timeIntervalSince(pausedAt)
+        }
+        return max(0, duration)
+    }
+
+    private func pausedDuration(for route: RouteRecord) -> TimeInterval {
+        var duration = route.pausedDuration
+        if let pausedAt = route.pausedAt {
+            duration += Date().timeIntervalSince(pausedAt)
         }
         return max(0, duration)
     }
