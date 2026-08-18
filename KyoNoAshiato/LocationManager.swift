@@ -27,6 +27,9 @@ final class LocationManager: NSObject {
     var recordingState: RecordingState = .idle
     var currentRoute: RouteRecord?
     var currentCoordinates: [CLLocationCoordinate2D] = []
+    /// 記録中のルートの総距離。点の追加ごとに加算していく。
+    /// 表示のたびに全点をなめると点数に比例して重くなるため、ここで持ち回す。
+    var currentDistance: CLLocationDistance = 0
 
     /// 互換性のため残しているフラグ。出発前は false、記録中・一時停止中はいずれも true。
     /// 一時停止と記録中を区別したい場合は `recordingState` を見ること。
@@ -79,6 +82,7 @@ final class LocationManager: NSObject {
             currentRoute = resumed
             recordingState = .paused
             currentCoordinates = resumed.coordinates
+            currentDistance = Self.pathDistance(of: currentCoordinates)
             lastAcceptedLocation = nil
             // 残りの paused ルートは混乱の元なので閉じる（通常は1件しかないはずだが念のため）。
             for stray in pausedRoutes.dropFirst() {
@@ -185,6 +189,7 @@ final class LocationManager: NSObject {
         try? modelContext.save()
         currentRoute = route
         currentCoordinates = []
+        currentDistance = 0
         lastAcceptedLocation = nil
         recordingState = .recording
         clManager.startUpdatingLocation()
@@ -244,6 +249,21 @@ final class LocationManager: NSObject {
         notifyRecordingDidChange()
     }
 
+    /// 座標列の総距離。復元時の初期値計算だけに使う（以降は点の追加ごとに加算する）。
+    static func pathDistance(of coordinates: [CLLocationCoordinate2D]) -> CLLocationDistance {
+        guard coordinates.count >= 2 else { return 0 }
+        var total: CLLocationDistance = 0
+        for index in 1..<coordinates.count {
+            let from = CLLocation(
+                latitude: coordinates[index - 1].latitude,
+                longitude: coordinates[index - 1].longitude
+            )
+            let to = CLLocation(latitude: coordinates[index].latitude, longitude: coordinates[index].longitude)
+            total += to.distance(from: from)
+        }
+        return total
+    }
+
     private func notifyRecordingDidChange() {
         NotificationCenter.default.post(name: .locationManagerRecordingDidChange, object: self)
     }
@@ -272,6 +292,10 @@ extension LocationManager: CLLocationManagerDelegate {
             )
             point.route = route
             route.points.append(point)
+            if let previous = currentCoordinates.last {
+                let from = CLLocation(latitude: previous.latitude, longitude: previous.longitude)
+                currentDistance += from.distance(from: location)
+            }
             currentCoordinates.append(location.coordinate)
             lastAcceptedLocation = location
             didAddPoint = true

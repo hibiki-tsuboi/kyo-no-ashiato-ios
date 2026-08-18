@@ -18,6 +18,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var recordingObserver: NSObjectProtocol?
     private var refreshTimer: Timer?
     private var informationActionConfiguration: InformationActionConfiguration?
+    private var informationItemContents: [InformationItemContent]?
+    private var pinImageCache: [PinImageKey: UIImage] = [:]
     private weak var templateApplicationScene: CPTemplateApplicationScene?
     private var mapMode: MapMode = .footprints
     private var isSearchingParking = false
@@ -27,6 +29,17 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private struct InformationActionConfiguration: Equatable {
         let recordingState: RecordingState
         let hasMapContent: Bool
+    }
+
+    private struct InformationItemContent: Equatable {
+        let title: String
+        let detail: String
+    }
+
+    private struct PinImageKey: Hashable {
+        let pinKind: MapPinKind
+        let selected: Bool
+        let userInterfaceStyle: UIUserInterfaceStyle
     }
 
     /// 地図画面(POIテンプレート)に何を出しているか。ナビバーのボタンで切り替える。
@@ -103,6 +116,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         templateApplicationScene = nil
         mapMode = .footprints
         isSearchingParking = false
+        informationItemContents = nil
+        pinImageCache = [:]
     }
 
     private func observeRecordingChanges() {
@@ -128,7 +143,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
         configureInformationTemplate(informationTemplate)
 
-        if let pointOfInterestTemplate {
+        // 閉じられた地図画面は作り直さない。表示されていないのにピン画像の描画まで走ってしまう。
+        if let pointOfInterestTemplate, interfaceController?.topTemplate === pointOfInterestTemplate {
             // 駐車場表示中はPOIを差し替えない。あしあとの更新で駐車場一覧が消えるのを防ぎつつ、
             // POIの更新を60秒に1回までに抑えるガイドラインにも合わせる。
             // タイトルとボタンだけは更新して、あしあとが出来たらトグルが現れるようにする。
@@ -179,8 +195,13 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func configureInformationTemplate(_ template: CPInformationTemplate) {
-        template.title = "今日のあしあと"
-        template.items = makeInformationItems()
+        // 同じ内容を入れ直すとCarPlay側が画面を組み直してしまい、その瞬間のタップが
+        // 取りこぼされる。表示文字列が変わったときだけ差し替える。
+        let itemContents = makeInformationItemContents()
+        if itemContents != informationItemContents {
+            template.items = itemContents.map { CPInformationItem(title: $0.title, detail: $0.detail) }
+            informationItemContents = itemContents
+        }
         let actionConfiguration = makeInformationActionConfiguration()
         if actionConfiguration != informationActionConfiguration {
             template.actions = makeActions(for: actionConfiguration)
@@ -581,6 +602,22 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func makePinImage(for pinKind: MapPinKind, selected: Bool) -> UIImage? {
+        let key = PinImageKey(
+            pinKind: pinKind,
+            selected: selected,
+            userInterfaceStyle: interfaceController?.carTraitCollection.userInterfaceStyle ?? .unspecified
+        )
+        if let cached = pinImageCache[key] {
+            return cached
+        }
+        let image = drawPinImage(for: pinKind, selected: selected)
+        if let image {
+            pinImageCache[key] = image
+        }
+        return image
+    }
+
+    private func drawPinImage(for pinKind: MapPinKind, selected: Bool) -> UIImage? {
         switch pinKind {
         case .start:
             return nil
@@ -716,18 +753,24 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func makeInformationItems() -> [CPInformationItem] {
+        makeInformationItemContents().map { CPInformationItem(title: $0.title, detail: $0.detail) }
+    }
+
+    private func makeInformationItemContents() -> [InformationItemContent] {
         let route = locationManager.currentRoute
-        let distance = route.map { formatDistance($0.totalDistance) } ?? "-"
+        // 距離は LocationManager が加算しながら持っているものを使う。
+        // route.totalDistance は毎回全点をなめるため、毎秒の更新には重すぎる。
+        let distance = route.map { _ in formatDistance(locationManager.currentDistance) } ?? "-"
         let startTime = route.map { formatTime($0.startDate) } ?? "-"
         let elapsed = route.map { formatDuration(activeDuration(for: $0)) } ?? "-"
         let paused = route.map { formatDuration(pausedDuration(for: $0)) } ?? "-"
 
         return [
-            CPInformationItem(title: "状態", detail: stateText),
-            CPInformationItem(title: "開始", detail: startTime),
-            CPInformationItem(title: "距離", detail: distance),
-            CPInformationItem(title: "休憩時間", detail: paused),
-            CPInformationItem(title: "移動時間", detail: elapsed),
+            InformationItemContent(title: "状態", detail: stateText),
+            InformationItemContent(title: "開始", detail: startTime),
+            InformationItemContent(title: "距離", detail: distance),
+            InformationItemContent(title: "休憩時間", detail: paused),
+            InformationItemContent(title: "移動時間", detail: elapsed),
         ]
     }
 
@@ -809,8 +852,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
     }
 
+    /// 地図に出せるものがあるか。毎秒のボタン更新から呼ばれるので、
+    /// makeMapPoints() のような点数に比例する処理はここでは使わない。
     private var hasMapContent: Bool {
-        !makeMapPoints().isEmpty
+        !locationManager.currentCoordinates.isEmpty
     }
 
     private func startRecordingFromCarPlay() {

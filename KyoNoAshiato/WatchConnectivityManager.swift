@@ -58,14 +58,7 @@ final class WatchConnectivityManager: NSObject {
     }
 
     private func currentDistance() -> Double {
-        guard let coords = locationManager?.currentCoordinates, coords.count >= 2 else { return 0 }
-        var total: CLLocationDistance = 0
-        for i in 1..<coords.count {
-            let from = CLLocation(latitude: coords[i - 1].latitude, longitude: coords[i - 1].longitude)
-            let to = CLLocation(latitude: coords[i].latitude, longitude: coords[i].longitude)
-            total += to.distance(from: from)
-        }
-        return total
+        locationManager?.currentDistance ?? 0
     }
 }
 
