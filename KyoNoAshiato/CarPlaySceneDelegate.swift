@@ -128,10 +128,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
         configureInformationTemplate(informationTemplate)
 
-        // 駐車場表示中はPOIを差し替えない。あしあとの更新で駐車場一覧が消えるのを防ぎつつ、
-        // POIの更新を60秒に1回までに抑えるガイドラインにも合わせる。
-        if updatesMap, mapMode == .footprints, let pointOfInterestTemplate {
-            configurePointOfInterestTemplate(pointOfInterestTemplate)
+        if let pointOfInterestTemplate {
+            // 駐車場表示中はPOIを差し替えない。あしあとの更新で駐車場一覧が消えるのを防ぎつつ、
+            // POIの更新を60秒に1回までに抑えるガイドラインにも合わせる。
+            // タイトルとボタンだけは更新して、あしあとが出来たらトグルが現れるようにする。
+            if updatesMap, mapMode == .footprints {
+                configurePointOfInterestTemplate(pointOfInterestTemplate)
+            } else {
+                updateMapTemplateChrome(pointOfInterestTemplate)
+            }
         }
 
         updateRefreshTimer()
@@ -183,12 +188,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
     }
 
-    private func openMapTemplate() {
+    /// 地図(POI)画面を開く。どのモードで開くかは入口ごとに指定する。
+    /// 「地図」ボタンは常にあしあと、「駐車場」ボタンは駐車場から開く。
+    private func openMapTemplate(mode: MapMode) {
         guard let interfaceController else { return }
-        // 前回の駐車場の結果が残っていなければ、あしあと表示から開く。
-        if mapMode == .parking, parkingSearch.spots.isEmpty {
-            mapMode = .footprints
-        }
+        mapMode = mode
         let content = makePointOfInterestContent()
         guard !content.points.isEmpty else {
             presentAlert("位置情報を取得中です")
@@ -232,7 +236,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         template.title = mapTemplateTitle
         // パン操作中の「完了」など、CarPlay標準の地図UIを優先して見せるため先頭側は空けておく。
         template.leadingNavigationBarButtons = []
-        template.trailingNavigationBarButtons = [makeMapModeBarButton()]
+        template.trailingNavigationBarButtons = [makeMapModeBarButton()].compactMap { $0 }
     }
 
     private var mapTemplateTitle: String {
@@ -249,7 +253,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     /// あしあと表示と駐車場表示を同じテンプレート内で切り替えるボタン。
     /// driving taskアプリの階層上限(ルート込み2枚)に収めるため、画面を積まずに内容を差し替える。
-    private func makeMapModeBarButton() -> CPBarButton {
+    /// 出発前など、切り替え先に見せるものが無いときはボタン自体を出さない。
+    private func makeMapModeBarButton() -> CPBarButton? {
         let button: CPBarButton
         switch mapMode {
         case .footprints:
@@ -259,6 +264,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 }
             }
         case .parking:
+            // あしあと画面は記録中(一時停止含む)だけ。情報画面の「地図」ボタンと同じ条件に揃える。
+            guard locationManager.recordingState != .idle, hasMapContent else { return nil }
             button = CPBarButton(title: "あしあと") { [weak self] _ in
                 Task { @MainActor in
                     self?.showFootprints()
@@ -329,9 +336,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// 検索が終わってから地図(POI)画面を積む。
     private func openParkingTemplate() {
         searchParking { [weak self] in
-            guard let self else { return }
-            self.mapMode = .parking
-            self.openMapTemplate()
+            self?.openMapTemplate(mode: .parking)
         }
     }
 
@@ -799,7 +804,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func makeMapTextButton() -> CPTextButton {
         CPTextButton(title: "地図", textStyle: .normal) { [weak self] _ in
             Task { @MainActor in
-                self?.openMapTemplate()
+                self?.openMapTemplate(mode: .footprints)
             }
         }
     }
