@@ -18,6 +18,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var recordingObserver: NSObjectProtocol?
     private var refreshTimer: Timer?
     private var informationActionConfiguration: InformationActionConfiguration?
+    private weak var templateApplicationScene: CPTemplateApplicationScene?
+    private var mapMode: MapMode = .footprints
+    private var isSearchingParking = false
+    private let parkingSearch = ParkingSearchService()
     private let locationManager = LocationManager.shared
 
     private struct InformationActionConfiguration: Equatable {
@@ -25,10 +29,17 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let hasMapContent: Bool
     }
 
+    /// 地図画面(POIテンプレート)に何を出しているか。ナビバーのボタンで切り替える。
+    private enum MapMode {
+        case footprints
+        case parking
+    }
+
     private enum MapPinKind {
         case start
         case waypoint
         case current
+        case parking
     }
 
     private struct MapPoint {
@@ -44,7 +55,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         _ templateApplicationScene: CPTemplateApplicationScene,
         didConnect interfaceController: CPInterfaceController
     ) {
-        connect(interfaceController)
+        connect(interfaceController, scene: templateApplicationScene)
     }
 
     func templateApplicationScene(
@@ -52,7 +63,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         didConnect interfaceController: CPInterfaceController,
         to window: CPWindow
     ) {
-        connect(interfaceController)
+        connect(interfaceController, scene: templateApplicationScene)
     }
 
     func templateApplicationScene(
@@ -70,8 +81,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         disconnect()
     }
 
-    private func connect(_ interfaceController: CPInterfaceController) {
+    private func connect(_ interfaceController: CPInterfaceController, scene: CPTemplateApplicationScene) {
         self.interfaceController = interfaceController
+        // 駐車場の「案内」で地図アプリをCarPlay画面側に開くためにsceneを持っておく。
+        self.templateApplicationScene = scene
         observeRecordingChanges()
         reloadTemplate(animated: false, force: true)
         updateRefreshTimer()
@@ -87,6 +100,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         pointOfInterestTemplate = nil
         informationActionConfiguration = nil
         interfaceController = nil
+        templateApplicationScene = nil
+        mapMode = .footprints
+        isSearchingParking = false
     }
 
     private func observeRecordingChanges() {
@@ -112,7 +128,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
         configureInformationTemplate(informationTemplate)
 
-        if updatesMap, let pointOfInterestTemplate {
+        // 駐車場表示中はPOIを差し替えない。あしあとの更新で駐車場一覧が消えるのを防ぎつつ、
+        // POIの更新を60秒に1回までに抑えるガイドラインにも合わせる。
+        if updatesMap, mapMode == .footprints, let pointOfInterestTemplate {
             configurePointOfInterestTemplate(pointOfInterestTemplate)
         }
 
@@ -167,6 +185,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     private func openMapTemplate() {
         guard let interfaceController else { return }
+        // 前回の駐車場の結果が残っていなければ、あしあと表示から開く。
+        if mapMode == .parking, parkingSearch.spots.isEmpty {
+            mapMode = .footprints
+        }
         let content = makePointOfInterestContent()
         guard !content.points.isEmpty else {
             presentAlert("位置情報を取得中です")
@@ -191,7 +213,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func makePointOfInterestTemplate() -> CPPointOfInterestTemplate {
         let content = makePointOfInterestContent()
         let template = CPPointOfInterestTemplate(
-            title: "地図",
+            title: mapTemplateTitle,
             pointsOfInterest: content.points,
             selectedIndex: content.selectedIndex
         )
@@ -201,14 +223,57 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     private func configurePointOfInterestTemplate(_ template: CPPointOfInterestTemplate) {
         let content = makePointOfInterestContent()
-        template.title = "地図"
-        // パン操作中の「完了」など、CarPlay標準の地図UIを優先して見せる。
-        template.leadingNavigationBarButtons = []
-        template.trailingNavigationBarButtons = []
+        updateMapTemplateChrome(template)
         template.setPointsOfInterest(content.points, selectedIndex: content.selectedIndex)
     }
 
+    /// タイトルとナビバーのボタンだけを最新化する。POIの差し替えを伴わないので検索中の表示更新に使う。
+    private func updateMapTemplateChrome(_ template: CPPointOfInterestTemplate) {
+        template.title = mapTemplateTitle
+        // パン操作中の「完了」など、CarPlay標準の地図UIを優先して見せるため先頭側は空けておく。
+        template.leadingNavigationBarButtons = []
+        template.trailingNavigationBarButtons = [makeMapModeBarButton()]
+    }
+
+    private var mapTemplateTitle: String {
+        if isSearchingParking {
+            return "駐車場を検索中…"
+        }
+        switch mapMode {
+        case .footprints:
+            return "地図"
+        case .parking:
+            return "駐車場"
+        }
+    }
+
+    /// あしあと表示と駐車場表示を同じテンプレート内で切り替えるボタン。
+    /// driving taskアプリの階層上限(ルート込み2枚)に収めるため、画面を積まずに内容を差し替える。
+    private func makeMapModeBarButton() -> CPBarButton {
+        let button: CPBarButton
+        switch mapMode {
+        case .footprints:
+            button = CPBarButton(title: "駐車場") { [weak self] _ in
+                Task { @MainActor in
+                    self?.showParkingSpots()
+                }
+            }
+        case .parking:
+            button = CPBarButton(title: "あしあと") { [weak self] _ in
+                Task { @MainActor in
+                    self?.showFootprints()
+                }
+            }
+        }
+        button.isEnabled = !isSearchingParking
+        return button
+    }
+
     private func makePointOfInterestContent() -> (points: [CPPointOfInterest], selectedIndex: Int) {
+        if mapMode == .parking {
+            return makeParkingPointOfInterestContent()
+        }
+
         let mapPoints = makeMapPoints()
         let points = mapPoints.map { point in
             makePointOfInterest(
@@ -221,6 +286,139 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
         let selectedIndex = mapPoints.firstIndex { $0.isCurrent } ?? NSNotFound
         return (points, selectedIndex)
+    }
+
+    private func makeParkingPointOfInterestContent() -> (points: [CPPointOfInterest], selectedIndex: Int) {
+        let points = parkingSearch.spots.map { makeParkingPointOfInterest(for: $0) }
+        // 一番近い駐車場の詳細カードを開いた状態で見せる。
+        return (points, points.isEmpty ? NSNotFound : 0)
+    }
+
+    private func makeParkingPointOfInterest(for spot: ParkingSearchService.Spot) -> CPPointOfInterest {
+        let distanceText = formatDistance(spot.distance)
+        let pointOfInterest = CPPointOfInterest(
+            location: spot.mapItem,
+            title: spot.name,
+            subtitle: distanceText,
+            summary: spot.address,
+            detailTitle: spot.name,
+            detailSubtitle: distanceText,
+            detailSummary: spot.address,
+            pinImage: makePinImage(for: .parking, selected: false),
+            selectedPinImage: makePinImage(for: .parking, selected: true)
+        )
+        pointOfInterest.primaryButton = CPTextButton(title: "案内", textStyle: .confirm) { [weak self] _ in
+            Task { @MainActor in
+                self?.startNavigation(to: spot)
+            }
+        }
+        return pointOfInterest
+    }
+
+    /// 地図画面を開いたまま駐車場表示に切り替える。
+    /// 検索中はあしあとの表示を残したまま、タイトルとボタンだけで状態を伝える。
+    private func showParkingSpots() {
+        searchParking { [weak self] in
+            guard let self, let pointOfInterestTemplate = self.pointOfInterestTemplate else { return }
+            self.mapMode = .parking
+            self.configurePointOfInterestTemplate(pointOfInterestTemplate)
+        }
+    }
+
+    /// 情報画面から駐車場を直接開く。あしあとの地図がまだ無い待機中でも使えるように、
+    /// 検索が終わってから地図(POI)画面を積む。
+    private func openParkingTemplate() {
+        searchParking { [weak self] in
+            guard let self else { return }
+            self.mapMode = .parking
+            self.openMapTemplate()
+        }
+    }
+
+    /// 現在地を取り直してから駐車場を検索する。見つかったときだけ completion を呼ぶ。
+    private func searchParking(completion: @escaping () -> Void) {
+        guard !isSearchingParking else { return }
+        guard locationManager.canRecordLocation else {
+            locationManager.requestPermissionIfNeeded()
+            presentAlert("iPhoneで位置情報を許可してください")
+            return
+        }
+
+        isSearchingParking = true
+        if let pointOfInterestTemplate {
+            updateMapTemplateChrome(pointOfInterestTemplate)
+        }
+
+        locationManager.captureCurrentLocation { coordinate in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard let coordinate else {
+                    self.failParkingSearch(message: "現在地を取得できませんでした")
+                    return
+                }
+                self.parkingSearch.searchSpots(around: coordinate) { [weak self] result in
+                    guard let self else { return }
+                    switch result {
+                    case .success(let spots) where spots.isEmpty:
+                        self.failParkingSearch(message: "近くに駐車場が見つかりませんでした")
+                    case .success:
+                        self.isSearchingParking = false
+                        completion()
+                    case .failure(let error):
+                        print("CarPlay parking search error: \(error.localizedDescription)")
+                        self.failParkingSearch(message: "駐車場を検索できませんでした")
+                    }
+                }
+            }
+        }
+    }
+
+    private func showFootprints() {
+        mapMode = .footprints
+        guard let pointOfInterestTemplate else { return }
+        configurePointOfInterestTemplate(pointOfInterestTemplate)
+    }
+
+    /// 検索に失敗したときの後始末。表示は元に戻してから理由を伝える。
+    private func failParkingSearch(message: String) {
+        isSearchingParking = false
+        if let pointOfInterestTemplate {
+            configurePointOfInterestTemplate(pointOfInterestTemplate)
+        }
+        presentAlert(message)
+    }
+
+    /// 選んだ駐車場までの案内を地図アプリに渡す。
+    /// 起動はCarPlay画面側で開くようscene経由で行う（CarPlay Developer Guideの推奨手順）。
+    /// 駐車場一覧は畳まずに残す。満車で戻ってきたときに別の駐車場をすぐ選び直せるようにするため。
+    private func startNavigation(to spot: ParkingSearchService.Spot) {
+        guard let url = makeDirectionsURL(for: spot.coordinate) else { return }
+        guard let scene = templateApplicationScene else {
+            presentAlert("地図アプリを開けませんでした")
+            return
+        }
+
+        scene.open(url, options: nil) { [weak self] success in
+            Task { @MainActor in
+                guard !success else { return }
+                self?.presentAlert("地図アプリを開けませんでした")
+            }
+        }
+    }
+
+    private func makeDirectionsURL(for coordinate: CLLocationCoordinate2D) -> URL? {
+        var components = URLComponents()
+        components.scheme = "maps"
+        components.host = ""
+        components.queryItems = [
+            URLQueryItem(
+                name: "daddr",
+                value: String(format: "%.6f,%.6f", coordinate.latitude, coordinate.longitude)
+            ),
+            // 車での経路案内を指定する。
+            URLQueryItem(name: "dirflg", value: "d"),
+        ]
+        return components.url
     }
 
     private func makeMapPoints() -> [MapPoint] {
@@ -390,6 +588,51 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             )
         case .waypoint:
             return makeFootprintPinImage(selected: selected)
+        case .parking:
+            return makeParkingPinImage(selected: selected)
+        }
+    }
+
+    /// 駐車場ピン。昼夜どちらの地図でも沈まないよう、白縁付きの塗りに白の「P」を載せる。
+    private func makeParkingPinImage(selected: Bool) -> UIImage {
+        let size = selected ? CPPointOfInterest.selectedPinImageSize : CPPointOfInterest.pinImageSize
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { _ in
+            let side = min(size.width, size.height) * (selected ? 0.84 : 0.72)
+            let rect = CGRect(
+                x: (size.width - side) / 2,
+                y: (size.height - side) / 2,
+                width: side,
+                height: side
+            )
+            let cornerRadius = side * 0.28
+            UIColor.systemIndigo.setFill()
+            UIBezierPath(roundedRect: rect, cornerRadius: cornerRadius).fill()
+
+            let lineWidth = max(2, side * 0.1)
+            let strokePath = UIBezierPath(
+                roundedRect: rect.insetBy(dx: lineWidth / 2, dy: lineWidth / 2),
+                cornerRadius: cornerRadius
+            )
+            UIColor.white.setStroke()
+            strokePath.lineWidth = lineWidth
+            strokePath.stroke()
+
+            let text = "P" as NSString
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: side * 0.6, weight: .bold),
+                .foregroundColor: UIColor.white,
+            ]
+            let textSize = text.size(withAttributes: attributes)
+            text.draw(
+                in: CGRect(
+                    x: rect.midX - textSize.width / 2,
+                    y: rect.midY - textSize.height / 2,
+                    width: textSize.width,
+                    height: textSize.height
+                ),
+                withAttributes: attributes
+            )
         }
     }
 
@@ -502,7 +745,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                     Task { @MainActor in
                         self?.startRecordingFromCarPlay()
                     }
-                }
+                },
+                makeParkingTextButton(),
             ]
         case .recording:
             var actions = [
@@ -540,6 +784,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 actions.append(makeMapTextButton())
             }
             return actions
+        }
+    }
+
+    /// 記録中は情報画面のボタンが上限(3個)に達するため、待機中だけ置く駐車場への入口。
+    private func makeParkingTextButton() -> CPTextButton {
+        CPTextButton(title: "駐車場", textStyle: .normal) { [weak self] _ in
+            Task { @MainActor in
+                self?.openParkingTemplate()
+            }
         }
     }
 
