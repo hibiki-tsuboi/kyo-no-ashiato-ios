@@ -73,7 +73,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     private enum MapPinKind: Hashable {
         case start
-        case waypoint
         case current
         /// 駐車場は詳細カードと対応が取れるよう、距離順の番号をピンに描く。
         case parking(number: Int)
@@ -655,12 +654,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             if isSameCoordinate(start.coordinate, current.coordinate) {
                 return [current]
             }
-            let waypoints = makeWaypointMapPoints(
-                from: sortedPoints,
-                startCoordinate: start.coordinate,
-                currentCoordinate: current.coordinate
-            )
-            return [start] + waypoints + [current]
+            // 途中の経由地点は出さない。POIテンプレートは「選んで次の行動に移る地点」を
+            // 出す画面なので、運転中に意味のある「今どこ・どこから来たか」だけに絞る。
+            return [start, current]
         }
 
         if let latest = locationManager.currentCoordinates.last {
@@ -677,69 +673,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
 
         return []
-    }
-
-    /// 途中経路を距離ベースで間引いて経由地点ピンを作る。
-    /// CPPointOfInterestTemplateはPOIを最大12個までしか表示できないため、
-    /// 出発地点・現在地の2枠を除いた最大10点に均等配分する。
-    private func makeWaypointMapPoints(
-        from sortedPoints: [LocationPoint],
-        startCoordinate: CLLocationCoordinate2D,
-        currentCoordinate: CLLocationCoordinate2D,
-        maxCount: Int = 10
-    ) -> [MapPoint] {
-        guard sortedPoints.count > 2, maxCount > 0 else { return [] }
-
-        var cumulativeDistances: [CLLocationDistance] = [0]
-        cumulativeDistances.reserveCapacity(sortedPoints.count)
-        var previousLocation = CLLocation(
-            latitude: sortedPoints[0].latitude,
-            longitude: sortedPoints[0].longitude
-        )
-        for point in sortedPoints.dropFirst() {
-            let location = CLLocation(latitude: point.latitude, longitude: point.longitude)
-            cumulativeDistances.append(cumulativeDistances.last! + location.distance(from: previousLocation))
-            previousLocation = location
-        }
-        guard let totalDistance = cumulativeDistances.last, totalDistance > 0 else { return [] }
-
-        var waypoints: [MapPoint] = []
-        var usedIndices = Set<Int>()
-        for step in 1...maxCount {
-            let targetDistance = totalDistance * Double(step) / Double(maxCount + 1)
-            var bestIndex = 1
-            var bestDifference = CLLocationDistance.greatestFiniteMagnitude
-            for index in 1..<(sortedPoints.count - 1) {
-                let difference = abs(cumulativeDistances[index] - targetDistance)
-                if difference < bestDifference {
-                    bestDifference = difference
-                    bestIndex = index
-                }
-            }
-            guard !usedIndices.contains(bestIndex) else { continue }
-
-            let point = sortedPoints[bestIndex]
-            let waypointCoordinate = coordinate(for: point)
-            // 出発地点・現在地・既存の経由地点と重なる点は間引く(停止中の重複サンプル対策)。
-            if isSameCoordinate(waypointCoordinate, startCoordinate)
-                || isSameCoordinate(waypointCoordinate, currentCoordinate)
-                || waypoints.contains(where: { isSameCoordinate(waypointCoordinate, $0.coordinate) }) {
-                continue
-            }
-
-            usedIndices.insert(bestIndex)
-            waypoints.append(
-                MapPoint(
-                    coordinate: waypointCoordinate,
-                    title: "経由地点",
-                    subtitle: formatTime(point.timestamp),
-                    summary: nil,
-                    isCurrent: false,
-                    pinKind: .waypoint
-                )
-            )
-        }
-        return waypoints
     }
 
     private func isSameCoordinate(_ lhs: CLLocationCoordinate2D, _ rhs: CLLocationCoordinate2D) -> Bool {
@@ -802,8 +735,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 hasHalo: selected,
                 selected: selected
             )
-        case .waypoint:
-            return makeFootprintPinImage(selected: selected)
         case .parking(let number):
             return makeParkingPinImage(number: number, selected: selected)
         }
@@ -870,30 +801,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 ),
                 withAttributes: attributes
             )
-        }
-    }
-
-    private func makeFootprintPinImage(selected: Bool) -> UIImage {
-        let size = selected ? CPPointOfInterest.selectedPinImageSize : CPPointOfInterest.pinImageSize
-        let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { context in
-            let fontSize = min(size.width, size.height) * (selected ? 0.72 : 0.58)
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: fontSize)
-            ]
-            let text = "👣" as NSString
-            let textSize = text.size(withAttributes: attributes)
-            let textRect = CGRect(
-                x: (size.width - textSize.width) / 2,
-                y: (size.height - textSize.height) / 2,
-                width: textSize.width,
-                height: textSize.height
-            )
-            text.draw(in: textRect, withAttributes: attributes)
-            // 絵文字は黒いシルエットで地図上では重すぎるため、
-            // アルファだけ残して昼夜どちらの地図でも見える明るめのグレーに置き換える。
-            UIColor(white: 0.78, alpha: 1).setFill()
-            context.fill(CGRect(origin: .zero, size: size), blendMode: .sourceIn)
         }
     }
 
