@@ -36,10 +36,14 @@ final class ParkingSearchService {
         }
     }
 
-    /// CPPointOfInterestTemplateが表示できるPOIの上限に合わせる。
-    static let maxSpotCount = 12
+    /// テンプレートの上限は12個だが、番号を1桁に収めて運転中でも読めるように9件までにする。
+    /// ガイドラインも「most relevant or nearby」に絞ることを勧めている。
+    static let maxSpotCount = 9
 
-    private static let searchRadius: CLLocationDistance = 3000
+    /// まずは近場だけを探す。ピンが狭い範囲に収まるほど地図が寄って見分けやすくなる。
+    private static let searchRadius: CLLocationDistance = 1500
+    /// 近場に1件も無かったときだけ広げる。駐車場が少ない場所で空振りしないため。
+    private static let fallbackSearchRadius: CLLocationDistance = 3000
     private static let minimumSearchInterval: TimeInterval = 60
     /// このくらいしか中心が動いていなければ、同じ場所を探しているものとしてキャッシュを使う。
     private static let cacheReuseDistance: CLLocationDistance = 300
@@ -66,7 +70,29 @@ final class ParkingSearchService {
             return
         }
 
-        let request = MKLocalPointsOfInterestRequest(center: center, radius: Self.searchRadius)
+        startSearch(around: center, measuringFrom: origin, radius: Self.searchRadius) { [weak self] result in
+            guard let self else { return }
+            // 近場に1件も無いときだけ範囲を広げて探し直す。
+            if case .success(let found) = result, found.isEmpty {
+                self.startSearch(
+                    around: center,
+                    measuringFrom: origin,
+                    radius: Self.fallbackSearchRadius,
+                    completion: completion
+                )
+                return
+            }
+            completion(result)
+        }
+    }
+
+    private func startSearch(
+        around center: CLLocationCoordinate2D,
+        measuringFrom origin: CLLocationCoordinate2D,
+        radius: CLLocationDistance,
+        completion: @escaping (Result<[Spot], Error>) -> Void
+    ) {
+        let request = MKLocalPointsOfInterestRequest(center: center, radius: radius)
         request.pointOfInterestFilter = MKPointOfInterestFilter(including: [.parking])
 
         search?.cancel()

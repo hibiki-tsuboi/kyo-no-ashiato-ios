@@ -1154,13 +1154,6 @@ extension CarPlaySceneDelegate: CPPointOfInterestTemplateDelegate {
         _ pointOfInterestTemplate: CPPointOfInterestTemplate,
         didChangeMapRegion region: MKCoordinateRegion
     ) {
-        // TODO: 調査用の一時ログ。地図のピンのタップが届いているか確かめたら消す。
-        print(String(
-            format: "CarPlay POI region: %.5f, %.5f span %.4f",
-            region.center.latitude,
-            region.center.longitude,
-            region.span.latitudeDelta
-        ))
         handleParkingMapRegionChange(region)
     }
 
@@ -1170,9 +1163,6 @@ extension CarPlaySceneDelegate: CPPointOfInterestTemplateDelegate {
         _ pointOfInterestTemplate: CPPointOfInterestTemplate,
         didSelectPointOfInterest pointOfInterest: CPPointOfInterest
     ) {
-        // TODO: 調査用の一時ログ。地図のピンのタップが届いているか確かめたら消す。
-        let index = pointOfInterestTemplate.pointsOfInterest.firstIndex { $0 === pointOfInterest }
-        print("CarPlay POI selected: index \(index.map(String.init) ?? "?") \(pointOfInterest.title)")
         cancelParkingRegionSearch()
     }
 }
