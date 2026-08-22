@@ -34,8 +34,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var lastParkingUpdateDate: Date?
     /// POIを入れ替えた直後のカメラ移動をパン操作と誤認しないための無視期間。
     private var ignoresMapRegionChangesUntil: Date?
-    /// 選択の再設定でループしないように、直前に再設定した時刻を持つ。
-    private var lastSelectionReapplyDate: Date?
 
     /// パンが止まったと判断するまでの待ち時間。
     private static let parkingRegionSearchDelay: TimeInterval = 1.5
@@ -142,7 +140,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         lastParkingSearchCenter = nil
         lastParkingUpdateDate = nil
         ignoresMapRegionChangesUntil = nil
-        lastSelectionReapplyDate = nil
         informationItemContents = nil
         pinImageCache = [:]
     }
@@ -526,25 +523,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     ) -> CLLocationDistance {
         CLLocation(latitude: origin.latitude, longitude: origin.longitude)
             .distance(from: CLLocation(latitude: destination.latitude, longitude: destination.longitude))
-    }
-
-    /// 選択されたPOIを選択し直す。地図を動かすAPIが無いため、選択の指定に
-    /// カメラ移動の副作用があるかを狙った試み。効果が無ければ丸ごと外してよい。
-    /// 再設定がまた didSelect を呼ぶとループするので、1秒間は再設定しない。
-    private func reapplySelectedIndex(
-        on template: CPPointOfInterestTemplate,
-        for pointOfInterest: CPPointOfInterest
-    ) {
-        guard mapMode == .parking else { return }
-        if let lastSelectionReapplyDate, Date().timeIntervalSince(lastSelectionReapplyDate) < 1 { return }
-        guard let index = template.pointsOfInterest.firstIndex(where: { $0 === pointOfInterest }) else { return }
-
-        // TODO: 調査用の一時ログ。効果を確かめたら消す。
-        print("CarPlay POI reapply selection: current \(template.selectedIndex) -> \(index)")
-        lastSelectionReapplyDate = Date()
-        // 差し替えではなく選択だけを動かすので、POI更新の間隔には数えない。
-        ignoresMapRegionChangesUntil = Date().addingTimeInterval(Self.mapRegionSettleDuration)
-        template.selectedIndex = index
     }
 
     private func showFootprints() {
@@ -1186,6 +1164,5 @@ extension CarPlaySceneDelegate: CPPointOfInterestTemplateDelegate {
         didSelectPointOfInterest pointOfInterest: CPPointOfInterest
     ) {
         cancelParkingRegionSearch()
-        reapplySelectedIndex(on: pointOfInterestTemplate, for: pointOfInterest)
     }
 }
