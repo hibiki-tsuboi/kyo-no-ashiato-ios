@@ -8,9 +8,9 @@
 import CoreLocation
 import MapKit
 
-/// CarPlayの駐車場検索。現在地周辺の駐車場をMapKitから探す。
+/// CarPlayの駐車場検索。指定した地点の周辺の駐車場をMapKitから探す。
 /// driving taskアプリのガイドラインではPOIの更新は60秒に1回までなので、
-/// 直前の検索から60秒以内はネットワーク検索をせずキャッシュを返す。
+/// 同じあたりを立て続けに探したときはネットワーク検索をせずキャッシュを返す。
 @MainActor
 final class ParkingSearchService {
     struct Spot {
@@ -18,17 +18,21 @@ final class ParkingSearchService {
         let name: String
         let address: String?
         let coordinate: CLLocationCoordinate2D
+        /// 運転者の現在地からの距離。表示に使う値で、並び順の基準とは別。
         let distance: CLLocationDistance
 
         fileprivate func measured(from origin: CLLocation) -> Spot {
-            let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-            return Spot(
+            Spot(
                 mapItem: mapItem,
                 name: name,
                 address: address,
                 coordinate: coordinate,
                 distance: origin.distance(from: location)
             )
+        }
+
+        fileprivate var location: CLLocation {
+            CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         }
     }
 
@@ -37,24 +41,32 @@ final class ParkingSearchService {
 
     private static let searchRadius: CLLocationDistance = 3000
     private static let minimumSearchInterval: TimeInterval = 60
+    /// このくらいしか中心が動いていなければ、同じ場所を探しているものとしてキャッシュを使う。
+    private static let cacheReuseDistance: CLLocationDistance = 300
 
     private(set) var spots: [Spot] = []
 
     private var search: MKLocalSearch?
     private var lastSearchDate: Date?
+    private var lastSearchCenter: CLLocationCoordinate2D?
 
-    /// 現在地周辺の駐車場を近い順に返す。完了ハンドラはメインアクター上で呼ばれる。
+    /// `center` の周辺の駐車場を、`center` に近い順に返す。完了ハンドラはメインアクター上で呼ばれる。
+    /// `origin` を渡すと距離を測る場所だけを別にできる。地図をパンして別の場所を探すときも、
+    /// 表示する距離は運転者の現在地からにしたいため。
     func searchSpots(
-        around coordinate: CLLocationCoordinate2D,
+        around center: CLLocationCoordinate2D,
+        measuringFrom origin: CLLocationCoordinate2D? = nil,
         completion: @escaping (Result<[Spot], Error>) -> Void
     ) {
-        if let cached = cachedSpots(around: coordinate) {
+        let origin = origin ?? center
+
+        if let cached = cachedSpots(around: center, measuringFrom: origin) {
             spots = cached
             completion(.success(cached))
             return
         }
 
-        let request = MKLocalPointsOfInterestRequest(center: coordinate, radius: Self.searchRadius)
+        let request = MKLocalPointsOfInterestRequest(center: center, radius: Self.searchRadius)
         request.pointOfInterestFilter = MKPointOfInterestFilter(including: [.parking])
 
         search?.cancel()
@@ -70,24 +82,38 @@ final class ParkingSearchService {
                 return
             }
 
-            let found = Self.makeSpots(from: response?.mapItems ?? [], around: coordinate)
+            let found = Self.makeSpots(
+                from: response?.mapItems ?? [],
+                around: center,
+                measuringFrom: origin
+            )
             self.spots = found
             self.lastSearchDate = Date()
+            self.lastSearchCenter = center
             completion(.success(found))
         }
     }
 
-    /// 直前の検索から60秒以内なら再検索せず、距離だけ現在地基準で計算し直したキャッシュを使う。
-    private func cachedSpots(around coordinate: CLLocationCoordinate2D) -> [Spot]? {
-        guard !spots.isEmpty, let lastSearchDate else { return nil }
+    /// 直前の検索から60秒以内で、探す場所もほとんど動いていないなら再検索しない。
+    /// 並び順（＝ピンの番号）は変えず、表示する距離だけ現在地基準で計算し直す。
+    private func cachedSpots(
+        around center: CLLocationCoordinate2D,
+        measuringFrom origin: CLLocationCoordinate2D
+    ) -> [Spot]? {
+        guard !spots.isEmpty, let lastSearchDate, let lastSearchCenter else { return nil }
         guard Date().timeIntervalSince(lastSearchDate) < Self.minimumSearchInterval else { return nil }
-        return Self.sortedByDistance(spots, around: coordinate)
+        guard Self.distance(from: lastSearchCenter, to: center) < Self.cacheReuseDistance else { return nil }
+        let originLocation = CLLocation(latitude: origin.latitude, longitude: origin.longitude)
+        return spots.map { $0.measured(from: originLocation) }
     }
 
     private static func makeSpots(
         from mapItems: [MKMapItem],
-        around coordinate: CLLocationCoordinate2D
+        around center: CLLocationCoordinate2D,
+        measuringFrom origin: CLLocationCoordinate2D
     ) -> [Spot] {
+        let originLocation = CLLocation(latitude: origin.latitude, longitude: origin.longitude)
+        let centerLocation = CLLocation(latitude: center.latitude, longitude: center.longitude)
         let spots = mapItems.map { mapItem in
             Spot(
                 mapItem: mapItem,
@@ -96,17 +122,21 @@ final class ParkingSearchService {
                 coordinate: mapItem.location.coordinate,
                 distance: 0
             )
+            .measured(from: originLocation)
         }
-        return Array(sortedByDistance(spots, around: coordinate).prefix(maxSpotCount))
+        // 探した場所に近い順に絞る。現在地基準で絞ると、パンした先の中心付近が落ちてしまう。
+        return Array(
+            spots
+                .sorted { centerLocation.distance(from: $0.location) < centerLocation.distance(from: $1.location) }
+                .prefix(maxSpotCount)
+        )
     }
 
-    private static func sortedByDistance(
-        _ spots: [Spot],
-        around coordinate: CLLocationCoordinate2D
-    ) -> [Spot] {
-        let origin = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-        return spots
-            .map { $0.measured(from: origin) }
-            .sorted { $0.distance < $1.distance }
+    private static func distance(
+        from origin: CLLocationCoordinate2D,
+        to destination: CLLocationCoordinate2D
+    ) -> CLLocationDistance {
+        CLLocation(latitude: origin.latitude, longitude: origin.longitude)
+            .distance(from: CLLocation(latitude: destination.latitude, longitude: destination.longitude))
     }
 }

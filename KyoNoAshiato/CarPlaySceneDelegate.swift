@@ -25,6 +25,25 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var isSearchingParking = false
     private let parkingSearch = ParkingSearchService()
     private let locationManager = LocationManager.shared
+    /// 地図をパンしたときの再検索用。パン中は何度も通知が来るので、少し待ってから1回だけ探す。
+    private var parkingRegionSearchTimer: Timer?
+    private var pendingParkingRegionCenter: CLLocationCoordinate2D?
+    /// 最後に駐車場を探した中心。ここからあまり動いていないパンでは探し直さない。
+    private var lastParkingSearchCenter: CLLocationCoordinate2D?
+    /// 最後に駐車場のPOIを差し替えた時刻。POI更新を60秒に1回までに抑えるために見る。
+    private var lastParkingUpdateDate: Date?
+    /// POIを入れ替えた直後のカメラ移動をパン操作と誤認しないための無視期間。
+    private var ignoresMapRegionChangesUntil: Date?
+
+    /// パンが止まったと判断するまでの待ち時間。
+    private static let parkingRegionSearchDelay: TimeInterval = 1.5
+    /// driving taskアプリのガイドラインに合わせた、POI差し替えの最短間隔。
+    private static let parkingUpdateInterval: TimeInterval = 60
+    /// これ以上中心が動いたら別の場所を見ているとみなす。検索半径(3km)の一部だけ動いても
+    /// 同じ駐車場が並ぶだけなので、無駄な差し替えを避ける。
+    private static let parkingRegionShiftThreshold: CLLocationDistance = 800
+    /// POI差し替えに伴うカメラ移動を無視する時間。
+    private static let mapRegionSettleDuration: TimeInterval = 2
 
     private struct InformationActionConfiguration: Equatable {
         let recordingState: RecordingState
@@ -106,6 +125,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     private func disconnect() {
         stopRefreshTimer()
+        cancelParkingRegionSearch()
         if let recordingObserver {
             NotificationCenter.default.removeObserver(recordingObserver)
         }
@@ -117,6 +137,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         templateApplicationScene = nil
         mapMode = .footprints
         isSearchingParking = false
+        lastParkingSearchCenter = nil
+        lastParkingUpdateDate = nil
+        ignoresMapRegionChangesUntil = nil
         informationItemContents = nil
         pinImageCache = [:]
     }
@@ -247,9 +270,22 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         return template
     }
 
-    private func configurePointOfInterestTemplate(_ template: CPPointOfInterestTemplate) {
-        let content = makePointOfInterestContent()
+    /// `preservesMapRegion` が true のときは選択を付けずに差し替える。パンで探し直したときに、
+    /// カメラが選択中のPOIへ飛んでユーザーが見ていた場所から離れてしまうのを防ぐため。
+    private func configurePointOfInterestTemplate(
+        _ template: CPPointOfInterestTemplate,
+        preservesMapRegion: Bool = false
+    ) {
+        var content = makePointOfInterestContent()
+        if preservesMapRegion {
+            content.selectedIndex = NSNotFound
+        }
         updateMapTemplateChrome(template)
+        if mapMode == .parking {
+            lastParkingUpdateDate = Date()
+        }
+        // 差し替えに伴うカメラ移動はパン操作として扱わない。
+        ignoresMapRegionChangesUntil = Date().addingTimeInterval(Self.mapRegionSettleDuration)
         template.setPointsOfInterest(content.points, selectedIndex: content.selectedIndex)
     }
 
@@ -371,9 +407,17 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     /// 現在地を取り直してから駐車場を検索する。見つかったときだけ completion を呼ぶ。
-    private func searchParking(completion: @escaping () -> Void) {
+    /// `center` を渡すとその周辺を探す（地図をパンしたときの再検索用）。距離と番号は
+    /// どちらの場合も運転者の現在地から測る。`silently` はパン起因の検索で使い、
+    /// 失敗しても運転中にアラートを出さないためのもの。
+    private func searchParking(
+        around center: CLLocationCoordinate2D? = nil,
+        silently: Bool = false,
+        completion: @escaping () -> Void
+    ) {
         guard !isSearchingParking else { return }
         guard locationManager.canRecordLocation else {
+            guard !silently else { return }
             locationManager.requestPermissionIfNeeded()
             presentAlert("iPhoneで位置情報を許可してください")
             return
@@ -388,35 +432,116 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 guard let coordinate else {
-                    self.failParkingSearch(message: "現在地を取得できませんでした")
+                    // 現在地が取れないと距離も番号も出せないので、パン起因なら黙って諦める。
+                    self.failParkingSearch(message: "現在地を取得できませんでした", silently: silently)
                     return
                 }
-                self.parkingSearch.searchSpots(around: coordinate) { [weak self] result in
+                let searchCenter = center ?? coordinate
+                self.parkingSearch.searchSpots(around: searchCenter, measuringFrom: coordinate) { [weak self] result in
                     guard let self else { return }
                     switch result {
                     case .success(let spots) where spots.isEmpty:
-                        self.failParkingSearch(message: "近くに駐車場が見つかりませんでした")
+                        self.failParkingSearch(
+                            message: center == nil ? "近くに駐車場が見つかりませんでした" : "この辺りに駐車場が見つかりませんでした",
+                            silently: silently
+                        )
                     case .success:
                         self.isSearchingParking = false
+                        self.lastParkingSearchCenter = searchCenter
                         completion()
                     case .failure(let error):
                         print("CarPlay parking search error: \(error.localizedDescription)")
-                        self.failParkingSearch(message: "駐車場を検索できませんでした")
+                        self.failParkingSearch(message: "駐車場を検索できませんでした", silently: silently)
                     }
                 }
             }
         }
     }
 
+    /// 地図をパンされたときの再検索。見ている場所が変わったぶんだけPOIを差し替える。
+    private func handleParkingMapRegionChange(_ region: MKCoordinateRegion) {
+        guard mapMode == .parking, !isSearchingParking else { return }
+        // 自分でPOIを入れ替えた直後のカメラ移動は、ユーザーのパンではないので無視する。
+        if let ignoresMapRegionChangesUntil, Date() < ignoresMapRegionChangesUntil { return }
+        let center = region.center
+        if let lastParkingSearchCenter,
+           Self.distance(from: lastParkingSearchCenter, to: center) < Self.parkingRegionShiftThreshold {
+            return
+        }
+        // すでに出している駐車場の近くを見ているだけなら、探し直しても同じ顔ぶれになる。
+        // カードやピンを選んでカメラが寄った場合もここで弾ける。
+        let isNearShownSpot = parkingSearch.spots.contains { spot in
+            Self.distance(from: spot.coordinate, to: center) < Self.parkingRegionShiftThreshold
+        }
+        if isNearShownSpot { return }
+        pendingParkingRegionCenter = center
+        scheduleParkingRegionSearch()
+    }
+
+    /// パン中は通知が連続で来るので、止まってから探す。前回の差し替えから60秒経つまでは待つ。
+    private func scheduleParkingRegionSearch() {
+        var delay = Self.parkingRegionSearchDelay
+        if let lastParkingUpdateDate {
+            let elapsed = Date().timeIntervalSince(lastParkingUpdateDate)
+            delay = max(delay, Self.parkingUpdateInterval - elapsed)
+        }
+
+        parkingRegionSearchTimer?.invalidate()
+        parkingRegionSearchTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { _ in
+            Task { @MainActor [weak self] in
+                self?.runPendingParkingRegionSearch()
+            }
+        }
+    }
+
+    private func cancelParkingRegionSearch() {
+        parkingRegionSearchTimer?.invalidate()
+        parkingRegionSearchTimer = nil
+        pendingParkingRegionCenter = nil
+    }
+
+    private func runPendingParkingRegionSearch() {
+        parkingRegionSearchTimer = nil
+        guard mapMode == .parking, let center = pendingParkingRegionCenter else { return }
+        pendingParkingRegionCenter = nil
+        // 待っている間に地図画面が閉じられていたら、見えないPOIを作り直すだけなのでやめる。
+        guard let pointOfInterestTemplate,
+              interfaceController?.topTemplate === pointOfInterestTemplate else { return }
+
+        searchParking(around: center, silently: true) { [weak self] in
+            guard let self,
+                  self.mapMode == .parking,
+                  let pointOfInterestTemplate = self.pointOfInterestTemplate else { return }
+            // 番号は付け直しになるが、選択を付けずに差し替えてユーザーが見ている場所は動かさない。
+            self.configurePointOfInterestTemplate(pointOfInterestTemplate, preservesMapRegion: true)
+        }
+    }
+
+    private static func distance(
+        from origin: CLLocationCoordinate2D,
+        to destination: CLLocationCoordinate2D
+    ) -> CLLocationDistance {
+        CLLocation(latitude: origin.latitude, longitude: origin.longitude)
+            .distance(from: CLLocation(latitude: destination.latitude, longitude: destination.longitude))
+    }
+
     private func showFootprints() {
+        cancelParkingRegionSearch()
         mapMode = .footprints
         guard let pointOfInterestTemplate else { return }
         configurePointOfInterestTemplate(pointOfInterestTemplate)
     }
 
     /// 検索に失敗したときの後始末。表示は元に戻してから理由を伝える。
-    private func failParkingSearch(message: String) {
+    /// パン起因(`silently`)のときは今見ている一覧を壊さないよう、タイトルとボタンだけ戻す。
+    private func failParkingSearch(message: String, silently: Bool = false) {
         isSearchingParking = false
+        guard !silently else {
+            if let pointOfInterestTemplate {
+                updateMapTemplateChrome(pointOfInterestTemplate)
+            }
+            return
+        }
         if let pointOfInterestTemplate {
             configurePointOfInterestTemplate(pointOfInterestTemplate)
         }
@@ -1029,5 +1154,15 @@ extension CarPlaySceneDelegate: CPPointOfInterestTemplateDelegate {
         _ pointOfInterestTemplate: CPPointOfInterestTemplate,
         didChangeMapRegion region: MKCoordinateRegion
     ) {
+        handleParkingMapRegionChange(region)
+    }
+
+    /// 詳細パネルを開いたら、パンで予約していた差し替えは取り下げる。
+    /// 差し替えると選択が外れてパネルが閉じてしまい、読んでいる途中で消えるのを防ぐため。
+    func pointOfInterestTemplate(
+        _ pointOfInterestTemplate: CPPointOfInterestTemplate,
+        didSelectPointOfInterest pointOfInterest: CPPointOfInterest
+    ) {
+        cancelParkingRegionSearch()
     }
 }
