@@ -48,11 +48,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         case parking
     }
 
-    private enum MapPinKind {
+    private enum MapPinKind: Hashable {
         case start
         case waypoint
         case current
-        case parking
+        /// 駐車場は詳細カードと対応が取れるよう、距離順の番号をピンに描く。
+        case parking(number: Int)
     }
 
     private struct MapPoint {
@@ -317,23 +318,31 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func makeParkingPointOfInterestContent() -> (points: [CPPointOfInterest], selectedIndex: Int) {
-        let points = parkingSearch.spots.map { makeParkingPointOfInterest(for: $0) }
+        let points = parkingSearch.spots.enumerated().map { index, spot in
+            makeParkingPointOfInterest(for: spot, number: index + 1)
+        }
         // 一番近い駐車場の詳細カードを開いた状態で見せる。
         return (points, points.isEmpty ? NSNotFound : 0)
     }
 
-    private func makeParkingPointOfInterest(for spot: ParkingSearchService.Spot) -> CPPointOfInterest {
+    /// 番号はピンに描く数字と揃える。同じ番号を見出しにも出すことで、
+    /// Pが複数並んでいてもカードがどのピンの話なのか分かるようにする。
+    private func makeParkingPointOfInterest(
+        for spot: ParkingSearchService.Spot,
+        number: Int
+    ) -> CPPointOfInterest {
         let distanceText = formatDistance(spot.distance)
+        let numberedName = "\(number). \(spot.name)"
         let pointOfInterest = CPPointOfInterest(
             location: spot.mapItem,
-            title: spot.name,
+            title: numberedName,
             subtitle: distanceText,
             summary: spot.address,
-            detailTitle: spot.name,
+            detailTitle: numberedName,
             detailSubtitle: distanceText,
             detailSummary: spot.address,
-            pinImage: makePinImage(for: .parking, selected: false),
-            selectedPinImage: makePinImage(for: .parking, selected: true)
+            pinImage: makePinImage(for: .parking(number: number), selected: false),
+            selectedPinImage: makePinImage(for: .parking(number: number), selected: true)
         )
         pointOfInterest.primaryButton = CPTextButton(title: "案内", textStyle: .confirm) { [weak self] _ in
             Task { @MainActor in
@@ -630,17 +639,21 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             )
         case .waypoint:
             return makeFootprintPinImage(selected: selected)
-        case .parking:
-            return makeParkingPinImage(selected: selected)
+        case .parking(let number):
+            return makeParkingPinImage(number: number, selected: selected)
         }
     }
 
-    /// 駐車場ピン。昼夜どちらの地図でも沈まないよう、白縁付きの塗りに白の「P」を載せる。
-    private func makeParkingPinImage(selected: Bool) -> UIImage {
+    /// 駐車場ピン。昼夜どちらの地図でも沈まないよう、白縁付きの塗りに白の数字を載せる。
+    /// 数字は詳細カードの見出しと同じ距離順の番号。選択中のピンだけは色を変えて大きく描き、
+    /// Pが密集していても「いま見ているカードのピンはどれか」が一目で分かるようにする。
+    private func makeParkingPinImage(number: Int, selected: Bool) -> UIImage {
         let size = selected ? CPPointOfInterest.selectedPinImageSize : CPPointOfInterest.pinImageSize
         let renderer = UIGraphicsImageRenderer(size: size)
         return renderer.image { _ in
-            let side = min(size.width, size.height) * (selected ? 0.84 : 0.72)
+            let base = min(size.width, size.height)
+            // 数字を大きく取りたいので枠いっぱいに描く。選択中はリング分だけ内側に寄せる。
+            let side = base * (selected ? 0.8 : 0.74)
             let rect = CGRect(
                 x: (size.width - side) / 2,
                 y: (size.height - side) / 2,
@@ -648,7 +661,22 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 height: side
             )
             let cornerRadius = side * 0.28
-            UIColor.systemIndigo.setFill()
+
+            if selected {
+                // 選択中は淡いリングを後ろに敷いて、まわりの未選択ピンから浮かせる。
+                UIColor.systemOrange.withAlphaComponent(0.28).setFill()
+                let haloSide = base * 0.98
+                let haloRect = CGRect(
+                    x: (size.width - haloSide) / 2,
+                    y: (size.height - haloSide) / 2,
+                    width: haloSide,
+                    height: haloSide
+                )
+                UIBezierPath(roundedRect: haloRect, cornerRadius: haloSide * 0.28).fill()
+            }
+
+            let fillColor: UIColor = selected ? .systemOrange : .systemIndigo
+            fillColor.setFill()
             UIBezierPath(roundedRect: rect, cornerRadius: cornerRadius).fill()
 
             let lineWidth = max(2, side * 0.1)
@@ -660,9 +688,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             strokePath.lineWidth = lineWidth
             strokePath.stroke()
 
-            let text = "P" as NSString
+            let text = "\(number)" as NSString
+            // 2桁でも縁に食い込まないよう、桁数で文字サイズを落とす。
+            let fontRatio: CGFloat = text.length > 1 ? 0.46 : 0.62
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: side * 0.6, weight: .bold),
+                .font: UIFont.monospacedDigitSystemFont(ofSize: side * fontRatio, weight: .bold),
                 .foregroundColor: UIColor.white,
             ]
             let textSize = text.size(withAttributes: attributes)
