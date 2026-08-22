@@ -30,15 +30,19 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var pendingParkingRegionCenter: CLLocationCoordinate2D?
     /// 最後に駐車場を探した中心。ここからあまり動いていないパンでは探し直さない。
     private var lastParkingSearchCenter: CLLocationCoordinate2D?
-    /// 最後に駐車場のPOIを差し替えた時刻。POI更新を60秒に1回までに抑えるために見る。
-    private var lastParkingUpdateDate: Date?
+    /// 最後にPOIを差し替えた時刻。POIの定期更新を60秒に1回までに抑えるために見る。
+    private var lastPointOfInterestUpdateDate: Date?
+    /// 最後に情報項目を差し替えた時刻。データの定期更新を10秒に1回までに抑えるために見る。
+    private var lastInformationUpdateDate: Date?
     /// POIを入れ替えた直後のカメラ移動をパン操作と誤認しないための無視期間。
     private var ignoresMapRegionChangesUntil: Date?
 
     /// パンが止まったと判断するまでの待ち時間。
     private static let parkingRegionSearchDelay: TimeInterval = 1.5
     /// driving taskアプリのガイドラインに合わせた、POI差し替えの最短間隔。
-    private static let parkingUpdateInterval: TimeInterval = 60
+    private static let pointOfInterestUpdateInterval: TimeInterval = 60
+    /// 同じガイドラインの、データ項目の定期更新の最短間隔。
+    private static let informationUpdateInterval: TimeInterval = 10
     /// これ以上中心が動いたら別の場所を見ているとみなす。検索半径(3km)の一部だけ動いても
     /// 同じ駐車場が並ぶだけなので、無駄な差し替えを避ける。
     private static let parkingRegionShiftThreshold: CLLocationDistance = 800
@@ -138,7 +142,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         mapMode = .footprints
         isSearchingParking = false
         lastParkingSearchCenter = nil
-        lastParkingUpdateDate = nil
+        lastPointOfInterestUpdateDate = nil
+        lastInformationUpdateDate = nil
         ignoresMapRegionChangesUntil = nil
         informationItemContents = nil
         pinImageCache = [:]
@@ -169,10 +174,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
         // 閉じられた地図画面は作り直さない。表示されていないのにピン画像の描画まで走ってしまう。
         if let pointOfInterestTemplate, interfaceController?.topTemplate === pointOfInterestTemplate {
-            // 駐車場表示中はPOIを差し替えない。あしあとの更新で駐車場一覧が消えるのを防ぎつつ、
-            // POIの更新を60秒に1回までに抑えるガイドラインにも合わせる。
+            // 駐車場表示中はPOIを差し替えない。あしあとの更新で駐車場一覧が消えるのを防ぐため。
+            // あしあと表示中も、POIの定期更新は60秒に1回までに抑える（ガイドライン）。
+            // 位置は毎秒何度も届くので、ここを素通しにすると制限を大きく超えてしまう。
             // タイトルとボタンだけは更新して、あしあとが出来たらトグルが現れるようにする。
-            if updatesMap, mapMode == .footprints {
+            if updatesMap, mapMode == .footprints, allowsPeriodicPointOfInterestUpdate {
                 configurePointOfInterestTemplate(pointOfInterestTemplate)
             } else {
                 updateMapTemplateChrome(pointOfInterestTemplate)
@@ -192,7 +198,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     private func startRefreshTimer() {
         guard refreshTimer == nil else { return }
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+        // ガイドラインの「データ項目の更新は10秒に1回まで」に合わせた間隔。
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: Self.informationUpdateInterval, repeats: true) { _ in
             Task { @MainActor [weak self] in
                 self?.refreshCarPlayUI(updatesMap: false)
             }
@@ -219,18 +226,35 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func configureInformationTemplate(_ template: CPInformationTemplate) {
+        // 記録状態が変わったのはユーザーの操作起因なので、ボタンは待たせずに差し替える。
+        let actionConfiguration = makeInformationActionConfiguration()
+        let isStateChange = actionConfiguration != informationActionConfiguration
+        if isStateChange {
+            template.actions = makeActions(for: actionConfiguration)
+            informationActionConfiguration = actionConfiguration
+        }
+
+        // ガイドラインではデータ項目の定期更新は10秒に1回まで。状態が変わったときだけ即時に出す。
+        guard isStateChange || allowsPeriodicInformationUpdate else { return }
+
         // 同じ内容を入れ直すとCarPlay側が画面を組み直してしまい、その瞬間のタップが
         // 取りこぼされる。表示文字列が変わったときだけ差し替える。
         let itemContents = makeInformationItemContents()
         if itemContents != informationItemContents {
             template.items = itemContents.map { CPInformationItem(title: $0.title, detail: $0.detail) }
             informationItemContents = itemContents
+            lastInformationUpdateDate = Date()
         }
-        let actionConfiguration = makeInformationActionConfiguration()
-        if actionConfiguration != informationActionConfiguration {
-            template.actions = makeActions(for: actionConfiguration)
-            informationActionConfiguration = actionConfiguration
-        }
+    }
+
+    private var allowsPeriodicInformationUpdate: Bool {
+        guard let lastInformationUpdateDate else { return true }
+        return Date().timeIntervalSince(lastInformationUpdateDate) >= Self.informationUpdateInterval
+    }
+
+    private var allowsPeriodicPointOfInterestUpdate: Bool {
+        guard let lastPointOfInterestUpdateDate else { return true }
+        return Date().timeIntervalSince(lastPointOfInterestUpdateDate) >= Self.pointOfInterestUpdateInterval
     }
 
     /// 地図(POI)画面を開く。どのモードで開くかは入口ごとに指定する。
@@ -281,9 +305,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             content.selectedIndex = NSNotFound
         }
         updateMapTemplateChrome(template)
-        if mapMode == .parking {
-            lastParkingUpdateDate = Date()
-        }
+        lastPointOfInterestUpdateDate = Date()
         // 差し替えに伴うカメラ移動はパン操作として扱わない。
         ignoresMapRegionChangesUntil = Date().addingTimeInterval(Self.mapRegionSettleDuration)
         template.setPointsOfInterest(content.points, selectedIndex: content.selectedIndex)
@@ -481,9 +503,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// パン中は通知が連続で来るので、止まってから探す。前回の差し替えから60秒経つまでは待つ。
     private func scheduleParkingRegionSearch() {
         var delay = Self.parkingRegionSearchDelay
-        if let lastParkingUpdateDate {
-            let elapsed = Date().timeIntervalSince(lastParkingUpdateDate)
-            delay = max(delay, Self.parkingUpdateInterval - elapsed)
+        if let lastPointOfInterestUpdateDate {
+            let elapsed = Date().timeIntervalSince(lastPointOfInterestUpdateDate)
+            delay = max(delay, Self.pointOfInterestUpdateInterval - elapsed)
         }
 
         parkingRegionSearchTimer?.invalidate()
@@ -1098,19 +1120,19 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         return String(format: "%.1f km", meters / 1000)
     }
 
+    /// 10秒に1回しか更新できないので、秒は出さずに分単位で見せる。
     private func formatDuration(_ interval: TimeInterval) -> String {
-        let totalSeconds = max(0, Int(interval.rounded()))
-        let hours = totalSeconds / 3600
-        let minutes = totalSeconds % 3600 / 60
-        let seconds = totalSeconds % 60
+        let totalMinutes = max(0, Int(interval.rounded()) / 60)
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
 
         if hours > 0 {
             return "\(hours)時間 \(minutes)分"
         }
-        if minutes > 0 {
-            return "\(minutes)分 \(seconds)秒"
+        if totalMinutes > 0 {
+            return "\(minutes)分"
         }
-        return "\(seconds)秒"
+        return "1分未満"
     }
 
     private func formatTime(_ date: Date) -> String {
