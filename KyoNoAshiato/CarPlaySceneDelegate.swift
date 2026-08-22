@@ -440,8 +440,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         guard !isSearchingParking else { return }
         guard locationManager.canRecordLocation else {
             guard !silently else { return }
+            // ガイドラインにより、CarPlayの文言でiPhoneの操作を促してはいけない。
+            // 状態だけ伝えて、許可の要求は黙って出す（安全なときに気づいてもらう）。
             locationManager.requestPermissionIfNeeded()
-            presentAlert("iPhoneで位置情報を許可してください")
+            presentAlert("位置情報が許可されていないため駐車場を検索できません")
             return
         }
 
@@ -1042,7 +1044,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func startRecordingFromCarPlay() {
         guard locationManager.canRecordLocation else {
             locationManager.requestPermissionIfNeeded()
-            presentAlert("iPhoneで位置情報を許可してください")
+            presentAlert("位置情報が許可されていないため記録を開始できません")
             return
         }
 
