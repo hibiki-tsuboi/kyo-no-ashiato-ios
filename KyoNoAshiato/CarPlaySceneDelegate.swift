@@ -596,7 +596,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         summary: String?,
         pinKind: MapPinKind
     ) -> CPPointOfInterest {
-        let mapItem = MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
+        // iOS 26でMKPlacemark経由の初期化は非推奨。住所は使わないので座標だけ渡す。
+        let mapItem = MKMapItem(
+            location: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude),
+            address: nil
+        )
         return CPPointOfInterest(
             location: mapItem,
             title: title,
