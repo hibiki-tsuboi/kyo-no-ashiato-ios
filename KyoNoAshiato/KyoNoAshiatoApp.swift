@@ -15,6 +15,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         LocationManager.shared.setup(modelContext: AppModelContainer.shared.mainContext)
+        // 出発リマインドをCarPlayにも出すためのカテゴリ登録。ジオフェンスでの
+        // バックグラウンド起動でも通知は飛ぶので、画面の表示を待たずにここで入れる。
+        NotificationManager.shared.registerCategories()
         // 動画閲覧用に temp に書き出した中間ファイルを掃除する。再生時に必要なら再生成される。
         cleanupTemporaryMediaFiles()
         return true
