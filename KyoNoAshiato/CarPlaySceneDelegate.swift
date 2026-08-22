@@ -34,6 +34,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var lastPointOfInterestUpdateDate: Date?
     /// 最後に情報項目を差し替えた時刻。データの定期更新を10秒に1回までに抑えるために見る。
     private var lastInformationUpdateDate: Date?
+    /// 地図画面のタイトルとボタンの現在の内容。変化が無いのに入れ直さないために持つ。
+    private var mapChromeState: MapChromeState?
     /// POIを入れ替えた直後のカメラ移動をパン操作と誤認しないための無視期間。
     private var ignoresMapRegionChangesUntil: Date?
 
@@ -57,6 +59,14 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private struct InformationItemContent: Equatable {
         let title: String
         let detail: String
+    }
+
+    /// 地図画面のナビバーの見た目。同じならCarPlayに入れ直さない。
+    private struct MapChromeState: Equatable {
+        let title: String
+        /// 切り替えボタンの文言。nil はボタンを出さない状態。
+        let toggleTitle: String?
+        let isToggleEnabled: Bool
     }
 
     private struct PinImageKey: Hashable {
@@ -143,6 +153,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         lastParkingSearchCenter = nil
         lastPointOfInterestUpdateDate = nil
         lastInformationUpdateDate = nil
+        mapChromeState = nil
         ignoresMapRegionChangesUntil = nil
         informationItemContents = nil
         pinImageCache = [:]
@@ -284,6 +295,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     private func makePointOfInterestTemplate() -> CPPointOfInterestTemplate {
         let content = makePointOfInterestContent()
+        mapChromeState = nil
         let template = CPPointOfInterestTemplate(
             title: mapTemplateTitle,
             pointsOfInterest: content.points,
@@ -307,12 +319,26 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         lastPointOfInterestUpdateDate = Date()
         // 差し替えに伴うカメラ移動はパン操作として扱わない。
         ignoresMapRegionChangesUntil = Date().addingTimeInterval(Self.mapRegionSettleDuration)
+        // TODO: 調査用の一時ログ。ズームで選択が外れる件の切り分けが済んだら消す。
+        print("CarPlay POI setPoints: mode \(mapMode) count \(content.points.count) selected \(content.selectedIndex)")
         template.setPointsOfInterest(content.points, selectedIndex: content.selectedIndex)
     }
 
     /// タイトルとナビバーのボタンだけを最新化する。POIの差し替えを伴わないので検索中の表示更新に使う。
     private func updateMapTemplateChrome(_ template: CPPointOfInterestTemplate) {
-        template.title = mapTemplateTitle
+        // 位置更新のたびにここを通るので、内容が同じときは触らない。
+        // ナビバーを入れ直すとCarPlay側が地図の状態（選択中のピンなど）を作り直してしまう。
+        let state = MapChromeState(
+            title: mapTemplateTitle,
+            toggleTitle: mapModeBarButtonTitle,
+            isToggleEnabled: !isSearchingParking
+        )
+        guard state != mapChromeState else { return }
+        mapChromeState = state
+        // TODO: 調査用の一時ログ。
+        print("CarPlay chrome: \(state.title) toggle \(state.toggleTitle ?? "-")")
+
+        template.title = state.title
         // パン操作中の「完了」など、CarPlay標準の地図UIを優先して見せるため先頭側は空けておく。
         template.leadingNavigationBarButtons = []
         template.trailingNavigationBarButtons = [makeMapModeBarButton()].compactMap { $0 }
@@ -333,21 +359,27 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// あしあと表示と駐車場表示を同じテンプレート内で切り替えるボタン。
     /// driving taskアプリの階層上限(ルート込み2枚)に収めるため、画面を積まずに内容を差し替える。
     /// 出発前など、切り替え先に見せるものが無いときはボタン自体を出さない。
-    private func makeMapModeBarButton() -> CPBarButton? {
-        let button: CPBarButton
+    private var mapModeBarButtonTitle: String? {
         switch mapMode {
         case .footprints:
-            button = CPBarButton(title: "駐車場") { [weak self] _ in
-                Task { @MainActor in
-                    self?.showParkingSpots()
-                }
-            }
+            return "駐車場"
         case .parking:
             // あしあと画面は記録中(一時停止含む)だけ。情報画面の「地図」ボタンと同じ条件に揃える。
             guard locationManager.recordingState != .idle, hasMapContent else { return nil }
-            button = CPBarButton(title: "あしあと") { [weak self] _ in
-                Task { @MainActor in
-                    self?.showFootprints()
+            return "あしあと"
+        }
+    }
+
+    private func makeMapModeBarButton() -> CPBarButton? {
+        guard let title = mapModeBarButtonTitle else { return nil }
+        let button = CPBarButton(title: title) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                switch self.mapMode {
+                case .footprints:
+                    self.showParkingSpots()
+                case .parking:
+                    self.showFootprints()
                 }
             }
         }
@@ -1116,6 +1148,14 @@ extension CarPlaySceneDelegate: CPPointOfInterestTemplateDelegate {
         _ pointOfInterestTemplate: CPPointOfInterestTemplate,
         didChangeMapRegion region: MKCoordinateRegion
     ) {
+        // TODO: 調査用の一時ログ。spanでズームの向きが分かる。
+        print(String(
+            format: "CarPlay region: %.5f, %.5f span %.5f selected %ld",
+            region.center.latitude,
+            region.center.longitude,
+            region.span.latitudeDelta,
+            pointOfInterestTemplate.selectedIndex
+        ))
         handleParkingMapRegionChange(region)
     }
 
@@ -1125,6 +1165,9 @@ extension CarPlaySceneDelegate: CPPointOfInterestTemplateDelegate {
         _ pointOfInterestTemplate: CPPointOfInterestTemplate,
         didSelectPointOfInterest pointOfInterest: CPPointOfInterest
     ) {
+        // TODO: 調査用の一時ログ。
+        let index = pointOfInterestTemplate.pointsOfInterest.firstIndex { $0 === pointOfInterest }
+        print("CarPlay POI selected: tapped \(index.map(String.init) ?? "?") template \(pointOfInterestTemplate.selectedIndex)")
         cancelParkingRegionSearch()
     }
 }
