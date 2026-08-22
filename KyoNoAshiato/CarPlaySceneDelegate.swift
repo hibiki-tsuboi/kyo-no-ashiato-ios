@@ -1049,19 +1049,21 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         return String(format: "%.1f km", meters / 1000)
     }
 
-    /// 10秒に1回しか更新できないので、秒は出さずに分単位で見せる。
+    /// 更新は10秒に1回までなので、秒の値は10秒ずつ飛ぶ。
+    /// それでも「今どのくらい走ったか」の実感は秒があるほうが掴みやすいので出す。
     private func formatDuration(_ interval: TimeInterval) -> String {
-        let totalMinutes = max(0, Int(interval.rounded()) / 60)
-        let hours = totalMinutes / 60
-        let minutes = totalMinutes % 60
+        let totalSeconds = max(0, Int(interval.rounded()))
+        let hours = totalSeconds / 3600
+        let minutes = totalSeconds % 3600 / 60
+        let seconds = totalSeconds % 60
 
         if hours > 0 {
             return "\(hours)時間 \(minutes)分"
         }
-        if totalMinutes > 0 {
-            return "\(minutes)分"
+        if minutes > 0 {
+            return "\(minutes)分 \(seconds)秒"
         }
-        return "1分未満"
+        return "\(seconds)秒"
     }
 
     private func formatTime(_ date: Date) -> String {
