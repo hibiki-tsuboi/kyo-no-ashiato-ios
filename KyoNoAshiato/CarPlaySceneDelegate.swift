@@ -36,6 +36,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var lastInformationUpdateDate: Date?
     /// 地図画面のタイトルとボタンの現在の内容。変化が無いのに入れ直さないために持つ。
     private var mapChromeState: MapChromeState?
+    /// 選択の反映でループしないように、直前に反映した時刻を持つ。
+    private var lastSelectionReapplyDate: Date?
+    /// 強調表示する駐車場の番号(0始まり)。nil は強調なし。
+    /// テンプレートは選択に応じてピン画像を描き分けてくれないので、こちらで持って
+    /// 強調したいピンには最初から選択時の画像を渡す。
+    private var highlightedParkingIndex: Int?
     /// POIを入れ替えた直後のカメラ移動をパン操作と誤認しないための無視期間。
     private var ignoresMapRegionChangesUntil: Date?
 
@@ -154,6 +160,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         lastPointOfInterestUpdateDate = nil
         lastInformationUpdateDate = nil
         mapChromeState = nil
+        lastSelectionReapplyDate = nil
+        highlightedParkingIndex = nil
         ignoresMapRegionChangesUntil = nil
         informationItemContents = nil
         pinImageCache = [:]
@@ -305,16 +313,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         return template
     }
 
-    /// `preservesMapRegion` が true のときは選択を付けずに差し替える。パンで探し直したときに、
-    /// カメラが選択中のPOIへ飛んでユーザーが見ていた場所から離れてしまうのを防ぐため。
-    private func configurePointOfInterestTemplate(
-        _ template: CPPointOfInterestTemplate,
-        preservesMapRegion: Bool = false
-    ) {
-        var content = makePointOfInterestContent()
-        if preservesMapRegion {
-            content.selectedIndex = NSNotFound
-        }
+    private func configurePointOfInterestTemplate(_ template: CPPointOfInterestTemplate) {
+        let content = makePointOfInterestContent()
         updateMapTemplateChrome(template)
         lastPointOfInterestUpdateDate = Date()
         // 差し替えに伴うカメラ移動はパン操作として扱わない。
@@ -407,18 +407,19 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func makeParkingPointOfInterestContent() -> (points: [CPPointOfInterest], selectedIndex: Int) {
+        let highlighted = parkingSearch.spots.isEmpty ? nil : highlightedParkingIndex
         let points = parkingSearch.spots.enumerated().map { index, spot in
-            makeParkingPointOfInterest(for: spot, number: index + 1)
+            makeParkingPointOfInterest(for: spot, number: index + 1, highlighted: index == highlighted)
         }
-        // 一番近い駐車場の詳細カードを開いた状態で見せる。
-        return (points, points.isEmpty ? NSNotFound : 0)
+        return (points, highlighted ?? NSNotFound)
     }
 
     /// 番号はピンに描く数字と揃える。同じ番号を見出しにも出すことで、
     /// Pが複数並んでいてもカードがどのピンの話なのか分かるようにする。
     private func makeParkingPointOfInterest(
         for spot: ParkingSearchService.Spot,
-        number: Int
+        number: Int,
+        highlighted: Bool
     ) -> CPPointOfInterest {
         let distanceText = formatDistance(spot.distance)
         let numberedName = "\(number). \(spot.name)"
@@ -430,7 +431,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             detailTitle: numberedName,
             detailSubtitle: distanceText,
             detailSummary: spot.address,
-            pinImage: makePinImage(for: .parking(number: number), selected: false),
+            // 強調中のピンは、選択されていない状態の画像としても選択時の見た目を渡す。
+            pinImage: makePinImage(for: .parking(number: number), selected: highlighted),
             selectedPinImage: makePinImage(for: .parking(number: number), selected: true)
         )
         pointOfInterest.primaryButton = CPTextButton(title: "案内", textStyle: .confirm) { [weak self] _ in
@@ -511,6 +513,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                     case .success:
                         self.isSearchingParking = false
                         self.lastParkingSearchCenter = searchCenter
+                        // 手動で開いたときは最寄りを強調して出す。パンでの探し直しでは、
+                        // 見ている場所を動かさないよう強調も選択も付けない。
+                        self.highlightedParkingIndex = silently ? nil : 0
                         completion()
                     case .failure(let error):
                         print("CarPlay parking search error: \(error.localizedDescription)")
@@ -579,8 +584,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             guard let self,
                   self.mapMode == .parking,
                   let pointOfInterestTemplate = self.pointOfInterestTemplate else { return }
-            // 番号は付け直しになるが、選択を付けずに差し替えてユーザーが見ている場所は動かさない。
-            self.configurePointOfInterestTemplate(pointOfInterestTemplate, preservesMapRegion: true)
+            // 番号は付け直しになるが、選択も強調も付けないのでユーザーが見ている場所は動かない。
+            self.configurePointOfInterestTemplate(pointOfInterestTemplate)
         }
     }
 
@@ -590,6 +595,24 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     ) -> CLLocationDistance {
         CLLocation(latitude: origin.latitude, longitude: origin.longitude)
             .distance(from: CLLocation(latitude: destination.latitude, longitude: destination.longitude))
+    }
+
+    /// リストで選ばれた駐車場のピンを黄色くする。
+    /// selectedIndex を入れ直すだけではピン画像が描き替わらないため、POIを作り直して
+    /// 強調したいピンに選択時の画像を持たせる。差し替えがまた didSelect を呼んでも
+    /// ループしないよう、1秒間は差し替えない。
+    private func highlightSelectedParkingSpot(
+        on template: CPPointOfInterestTemplate,
+        for pointOfInterest: CPPointOfInterest
+    ) {
+        guard mapMode == .parking else { return }
+        if let lastSelectionReapplyDate, Date().timeIntervalSince(lastSelectionReapplyDate) < 1 { return }
+        guard let index = template.pointsOfInterest.firstIndex(where: { $0 === pointOfInterest }),
+              index != highlightedParkingIndex else { return }
+
+        lastSelectionReapplyDate = Date()
+        highlightedParkingIndex = index
+        configurePointOfInterestTemplate(template)
     }
 
     private func showFootprints() {
@@ -1169,5 +1192,6 @@ extension CarPlaySceneDelegate: CPPointOfInterestTemplateDelegate {
         let index = pointOfInterestTemplate.pointsOfInterest.firstIndex { $0 === pointOfInterest }
         print("CarPlay POI selected: tapped \(index.map(String.init) ?? "?") template \(pointOfInterestTemplate.selectedIndex)")
         cancelParkingRegionSearch()
+        highlightSelectedParkingSpot(on: pointOfInterestTemplate, for: pointOfInterest)
     }
 }
