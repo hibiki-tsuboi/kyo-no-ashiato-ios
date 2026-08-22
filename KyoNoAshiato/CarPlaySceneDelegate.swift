@@ -264,7 +264,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         mapMode = mode
         let content = makePointOfInterestContent()
         guard !content.points.isEmpty else {
-            presentAlert("位置情報を取得中です")
+            presentAlert("位置情報を取得中です", shortTitle: "位置情報を取得中")
             return
         }
 
@@ -443,7 +443,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             // ガイドラインにより、CarPlayの文言でiPhoneの操作を促してはいけない。
             // 状態だけ伝えて、許可の要求は黙って出す（安全なときに気づいてもらう）。
             locationManager.requestPermissionIfNeeded()
-            presentAlert("位置情報が許可されていないため駐車場を検索できません")
+            presentAlert(
+                "位置情報が許可されていないため駐車場を検索できません",
+                shortTitle: "位置情報が未許可です"
+            )
             return
         }
 
@@ -457,7 +460,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 guard let self else { return }
                 guard let coordinate else {
                     // 現在地が取れないと距離も番号も出せないので、パン起因なら黙って諦める。
-                    self.failParkingSearch(message: "現在地を取得できませんでした", silently: silently)
+                    self.failParkingSearch(
+                        message: "現在地を取得できませんでした",
+                        shortMessage: "現在地が不明です",
+                        silently: silently
+                    )
                     return
                 }
                 let searchCenter = center ?? coordinate
@@ -467,6 +474,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                     case .success(let spots) where spots.isEmpty:
                         self.failParkingSearch(
                             message: center == nil ? "近くに駐車場が見つかりませんでした" : "この辺りに駐車場が見つかりませんでした",
+                            shortMessage: "駐車場なし",
                             silently: silently
                         )
                     case .success:
@@ -475,7 +483,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                         completion()
                     case .failure(let error):
                         print("CarPlay parking search error: \(error.localizedDescription)")
-                        self.failParkingSearch(message: "駐車場を検索できませんでした", silently: silently)
+                        self.failParkingSearch(
+                            message: "駐車場を検索できませんでした",
+                            shortMessage: "検索できません",
+                            silently: silently
+                        )
                     }
                 }
             }
@@ -558,7 +570,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     /// 検索に失敗したときの後始末。表示は元に戻してから理由を伝える。
     /// パン起因(`silently`)のときは今見ている一覧を壊さないよう、タイトルとボタンだけ戻す。
-    private func failParkingSearch(message: String, silently: Bool = false) {
+    private func failParkingSearch(message: String, shortMessage: String? = nil, silently: Bool = false) {
         isSearchingParking = false
         guard !silently else {
             if let pointOfInterestTemplate {
@@ -569,7 +581,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         if let pointOfInterestTemplate {
             configurePointOfInterestTemplate(pointOfInterestTemplate)
         }
-        presentAlert(message)
+        presentAlert(message, shortTitle: shortMessage)
     }
 
     /// 選んだ駐車場までの案内を地図アプリに渡す。
@@ -578,14 +590,14 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func startNavigation(to spot: ParkingSearchService.Spot) {
         guard let url = makeDirectionsURL(for: spot.coordinate) else { return }
         guard let scene = templateApplicationScene else {
-            presentAlert("地図アプリを開けませんでした")
+            presentAlert("地図アプリを開けませんでした", shortTitle: "地図を開けません")
             return
         }
 
         scene.open(url, options: nil) { [weak self] success in
             Task { @MainActor in
                 guard !success else { return }
-                self?.presentAlert("地図アプリを開けませんでした")
+                self?.presentAlert("地図アプリを開けませんでした", shortTitle: "地図を開けません")
             }
         }
     }
@@ -1044,7 +1056,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func startRecordingFromCarPlay() {
         guard locationManager.canRecordLocation else {
             locationManager.requestPermissionIfNeeded()
-            presentAlert("位置情報が許可されていないため記録を開始できません")
+            presentAlert(
+                "位置情報が許可されていないため記録を開始できません",
+                shortTitle: "位置情報が未許可です"
+            )
             return
         }
 
@@ -1059,7 +1074,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
         locationManager.stopRecording()
         refreshCarPlayUI()
-        presentAlert("あしあとを記録しました", returnsToRootAfterDismiss: true)
+        presentAlert("あしあとを記録しました", shortTitle: "記録しました", returnsToRootAfterDismiss: true)
     }
 
     private func confirmStopRecordingFromCarPlay() {
@@ -1080,10 +1095,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 }
             }
         }
-        let alert = CPAlertTemplate(titleVariants: ["到着してよいですか？"], actions: [cancel, arrive])
-        interfaceController.presentTemplate(alert, animated: true) { success, error in
+        // 記録を確定させる確認なので、ガイドラインが確認用途に挙げているaction sheetを使う。
+        let confirmation = CPActionSheetTemplate(
+            title: "到着",
+            message: "あしあとの記録を終了しますか？",
+            actions: [cancel, arrive]
+        )
+        interfaceController.presentTemplate(confirmation, animated: true) { success, error in
             if !success, let error {
-                print("CarPlay confirmation alert error: \(error.localizedDescription)")
+                print("CarPlay confirmation error: \(error.localizedDescription)")
             }
         }
     }
@@ -1141,7 +1161,13 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         date.formatted(date: .omitted, time: .shortened)
     }
 
-    private func presentAlert(_ title: String, returnsToRootAfterDismiss: Bool = false) {
+    /// `shortTitle` は画面の狭い車向けの短い言い回し。CarPlayは入る中で一番長いものを選ぶので、
+    /// 長い順に渡す（ヘッダの指定は "ordered longest to shortest"）。
+    private func presentAlert(
+        _ title: String,
+        shortTitle: String? = nil,
+        returnsToRootAfterDismiss: Bool = false
+    ) {
         guard let interfaceController else { return }
         let close = CPAlertAction(title: "OK", style: .default) { [weak self] _ in
             Task { @MainActor in
@@ -1155,7 +1181,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 }
             }
         }
-        let alert = CPAlertTemplate(titleVariants: [title], actions: [close])
+        let alert = CPAlertTemplate(
+            titleVariants: [title, shortTitle].compactMap { $0 },
+            actions: [close]
+        )
         interfaceController.presentTemplate(alert, animated: true) { success, error in
             if !success, let error {
                 print("CarPlay alert error: \(error.localizedDescription)")
