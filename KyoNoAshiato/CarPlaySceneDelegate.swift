@@ -286,8 +286,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             return
         }
 
-        let template = pointOfInterestTemplate ?? makePointOfInterestTemplate()
-        configurePointOfInterestTemplate(template)
+        // 作り立てのテンプレートは生成時にPOIを受け取っているので入れ直さない。
+        // 入れ直すとリストのスクロール位置が中途半端な所から始まってしまう。
+        let template: CPPointOfInterestTemplate
+        if let existing = pointOfInterestTemplate {
+            template = existing
+            configurePointOfInterestTemplate(existing)
+        } else {
+            template = makePointOfInterestTemplate()
+        }
         pointOfInterestTemplate = template
 
         if let topTemplate = interfaceController.topTemplate, topTemplate === template {
@@ -310,6 +317,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             selectedIndex: content.selectedIndex
         )
         template.pointOfInterestDelegate = self
+        // 生成時点でPOIを渡しているので、差し替えたときと同じ後始末をここで済ませる。
+        lastPointOfInterestUpdateDate = Date()
+        ignoresMapRegionChangesUntil = Date().addingTimeInterval(Self.mapRegionSettleDuration)
+        updateMapTemplateChrome(template)
         return template
     }
 
