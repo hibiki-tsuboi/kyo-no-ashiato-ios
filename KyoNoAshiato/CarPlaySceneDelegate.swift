@@ -38,6 +38,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var mapChromeState: MapChromeState?
     /// 選択の反映でループしないように、直前に反映した時刻を持つ。
     private var lastSelectionReapplyDate: Date?
+    /// リストで実際に選ばれたかどうか。開いた直後はテンプレート側の選択を付けない。
+    /// 選択を付けるとリストがその項目まで自動でスクロールし、先頭から始まらないため。
+    private var isParkingSpotSelected = false
     /// 強調表示する駐車場の番号(0始まり)。nil は強調なし。
     /// テンプレートは選択に応じてピン画像を描き分けてくれないので、こちらで持って
     /// 強調したいピンには最初から選択時の画像を渡す。
@@ -162,6 +165,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         mapChromeState = nil
         lastSelectionReapplyDate = nil
         highlightedParkingIndex = nil
+        isParkingSpotSelected = false
         ignoresMapRegionChangesUntil = nil
         informationItemContents = nil
         pinImageCache = [:]
@@ -422,7 +426,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let points = parkingSearch.spots.enumerated().map { index, spot in
             makeParkingPointOfInterest(for: spot, number: index + 1, highlighted: index == highlighted)
         }
-        return (points, highlighted ?? NSNotFound)
+        // ピンの強調とテンプレート側の選択は別物。開いた直後は強調だけ付けて、
+        // 選択はユーザーがリストをタップしてから渡す（開いた時点でスクロールさせないため）。
+        let selectedIndex = isParkingSpotSelected ? highlighted : nil
+        return (points, selectedIndex ?? NSNotFound)
     }
 
     /// 番号はピンに描く数字と揃える。同じ番号を見出しにも出すことで、
@@ -525,8 +532,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                         self.isSearchingParking = false
                         self.lastParkingSearchCenter = searchCenter
                         // 手動で開いたときは最寄りを強調して出す。パンでの探し直しでは、
-                        // 見ている場所を動かさないよう強調も選択も付けない。
+                        // 見ている場所を動かさないよう強調も付けない。
                         self.highlightedParkingIndex = silently ? nil : 0
+                        self.isParkingSpotSelected = false
                         completion()
                     case .failure(let error):
                         print("CarPlay parking search error: \(error.localizedDescription)")
@@ -623,6 +631,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
         lastSelectionReapplyDate = Date()
         highlightedParkingIndex = index
+        // ここからはユーザーが選んだ状態。詳細カードを開いたままにするため選択も渡す。
+        isParkingSpotSelected = true
         configurePointOfInterestTemplate(template)
     }
 
