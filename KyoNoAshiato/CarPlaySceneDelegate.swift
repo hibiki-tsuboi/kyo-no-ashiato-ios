@@ -21,12 +21,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var informationItemContents: [InformationItemContent]?
     private var pinImageCache: [PinImageKey: UIImage] = [:]
     private weak var templateApplicationScene: CPTemplateApplicationScene?
-    private var mapMode: MapMode = .footprints
+    /// 地図画面に出している場所のカテゴリ。あしあとの表示はやめたので常にどれかを指す。
+    private var placeCategory: PlaceSearchService.Category = .parking
     private var isSearchingPlaces = false
     /// 検索中のカテゴリ。タイトルに「駐車場を検索中…」と出すために持つ。
     private var searchingCategory: PlaceSearchService.Category?
-    /// 情報画面の「周辺」で開くモード。前回見ていたカテゴリを覚えておく。
-    private var lastPlaceMode: MapMode = .parking
+    /// カテゴリごとに1つ持つ。キャッシュ（60秒・中心300m）もカテゴリ単位で独立させる。
     private let placeSearches: [PlaceSearchService.Category: PlaceSearchService] = [
         .parking: PlaceSearchService(category: .parking),
         .fuel: PlaceSearchService(category: .fuel),
@@ -70,7 +70,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     private struct InformationActionConfiguration: Equatable {
         let recordingState: RecordingState
-        let hasMapContent: Bool
     }
 
     private struct InformationItemContent: Equatable {
@@ -81,57 +80,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// 地図画面のナビバーの見た目。同じならCarPlayに入れ直さない。
     private struct MapChromeState: Equatable {
         let title: String
-        let leadingTitles: [String]
         let trailingTitles: [String]
         let isEnabled: Bool
     }
 
     private struct PinImageKey: Hashable {
-        let pinKind: MapPinKind
+        let number: Int
+        let category: PlaceSearchService.Category
         let selected: Bool
         let userInterfaceStyle: UIUserInterfaceStyle
-    }
-
-    /// 地図画面(POIテンプレート)に何を出しているか。ナビバーのボタンで切り替える。
-    private enum MapMode {
-        case footprints
-        case parking
-        case fuel
-        case evCharging
-
-        /// 場所を探すモードなら対応するカテゴリ。あしあとは nil。
-        var searchCategory: PlaceSearchService.Category? {
-            switch self {
-            case .footprints: return nil
-            case .parking: return .parking
-            case .fuel: return .fuel
-            case .evCharging: return .evCharger
-            }
-        }
-
-        /// ナビバーのボタンに出す文言。
-        var barButtonTitle: String {
-            searchCategory?.title ?? "あしあと"
-        }
-    }
-
-    /// 場所を探すモードの全部。ナビバーの並びを作るときに使う。
-    private static let placeModes: [MapMode] = [.parking, .fuel, .evCharging]
-
-    private enum MapPinKind: Hashable {
-        case start
-        case current
-        /// 駐車場は詳細カードと対応が取れるよう、距離順の番号をピンに描く。
-        case place(number: Int, category: PlaceSearchService.Category)
-    }
-
-    private struct MapPoint {
-        let coordinate: CLLocationCoordinate2D
-        let title: String
-        let subtitle: String?
-        let summary: String?
-        let isCurrent: Bool
-        let pinKind: MapPinKind
     }
 
     func templateApplicationScene(
@@ -185,7 +142,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         informationActionConfiguration = nil
         interfaceController = nil
         templateApplicationScene = nil
-        mapMode = .footprints
+        placeCategory = .parking
         isSearchingPlaces = false
         searchingCategory = nil
         lastPlaceSearchCenter = nil
@@ -225,15 +182,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
         // 閉じられた地図画面は作り直さない。表示されていないのにピン画像の描画まで走ってしまう。
         if let pointOfInterestTemplate, interfaceController?.topTemplate === pointOfInterestTemplate {
-            // 駐車場表示中はPOIを差し替えない。あしあとの更新で駐車場一覧が消えるのを防ぐため。
-            // あしあと表示中も、POIの定期更新は60秒に1回までに抑える（ガイドライン）。
-            // 位置は毎秒何度も届くので、ここを素通しにすると制限を大きく超えてしまう。
-            // タイトルとボタンだけは更新して、あしあとが出来たらトグルが現れるようにする。
-            if updatesMap, mapMode == .footprints, allowsPeriodicPointOfInterestUpdate {
-                configurePointOfInterestTemplate(pointOfInterestTemplate)
-            } else {
-                updateMapTemplateChrome(pointOfInterestTemplate)
-            }
+            // 地図画面は周辺検索の結果だけなので、位置更新でPOIを作り直す必要はない。
+            // 検索中かどうかのタイトル表示だけ最新にする。
+            updateMapTemplateChrome(pointOfInterestTemplate)
         }
 
         updateRefreshTimer()
@@ -303,9 +254,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         return Date().timeIntervalSince(lastInformationUpdateDate) >= Self.informationUpdateInterval
     }
 
-    /// 今のモードで使う検索サービス。あしあと表示中は無し。
+    /// 今表示しているカテゴリの検索サービス。
     private var activeSearch: PlaceSearchService? {
-        mapMode.searchCategory.flatMap { placeSearches[$0] }
+        placeSearches[placeCategory]
     }
 
     private var activeSpots: [PlaceSearchService.Spot] {
@@ -317,12 +268,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         return Date().timeIntervalSince(lastPointOfInterestUpdateDate) >= Self.pointOfInterestUpdateInterval
     }
 
-    /// 地図(POI)画面を開く。どのモードで開くかは入口ごとに指定する。
-    /// 「地図」ボタンは常にあしあと、「駐車場」ボタンは駐車場から開く。
-    private func openMapTemplate(mode: MapMode) {
+    /// 地図(POI)画面を開く。どのカテゴリで開くかは入口ごとに指定する。
+    private func openMapTemplate(category: PlaceSearchService.Category) {
         guard let interfaceController else { return }
-        mapMode = mode
-        rememberPlaceMode(mode)
+        placeCategory = category
         let content = makePointOfInterestContent()
         guard !content.points.isEmpty else {
             presentAlert("位置情報を取得中です", shortTitle: "位置情報を取得中")
@@ -376,28 +325,16 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         template.setPointsOfInterest(content.points, selectedIndex: content.selectedIndex)
     }
 
-    /// ナビバーに並べるモード。今いる場所以外のカテゴリを常に出して1タップで行けるようにする。
-    /// leading はシステムの戻るボタンやパン中の「完了」が出る場所なので、
-    /// 記録中に「あしあと」を置くとき以外は空けておく。
-    private var chromeButtonModes: (leading: [MapMode], trailing: [MapMode]) {
-        guard let category = mapMode.searchCategory else {
-            // あしあと表示中は周辺への入口を1つだけ。前回見ていたカテゴリへ送る。
-            return ([], [lastPlaceMode])
-        }
-        let others = Self.placeModes.filter { $0.searchCategory != category }
-        let showsFootprints = locationManager.recordingState != .idle && hasMapContent
-        return (showsFootprints ? [.footprints] : [], others)
+    /// ナビバーに並べるカテゴリ。今見ているもの以外を出して1タップで行けるようにする。
+    /// leading はシステムの戻るボタンやパン中の「完了」が出る場所なので使わない。
+    private var otherCategories: [PlaceSearchService.Category] {
+        PlaceSearchService.Category.allCases.filter { $0 != placeCategory }
     }
 
-    private func makeModeBarButton(for mode: MapMode) -> CPBarButton {
-        let button = CPBarButton(title: mode.barButtonTitle) { [weak self] _ in
+    private func makeCategoryBarButton(for category: PlaceSearchService.Category) -> CPBarButton {
+        let button = CPBarButton(title: category.title) { [weak self] _ in
             Task { @MainActor in
-                guard let self else { return }
-                if mode.searchCategory == nil {
-                    self.showFootprints()
-                } else {
-                    self.showPlaces(mode: mode)
-                }
+                self?.showPlaces(category: category)
             }
         }
         button.isEnabled = !isSearchingPlaces
@@ -408,46 +345,30 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func updateMapTemplateChrome(_ template: CPPointOfInterestTemplate) {
         // 位置更新のたびにここを通るので、内容が同じときは触らない。
         // ナビバーを入れ直すとCarPlay側が地図の状態（選択中のピンなど）を作り直してしまう。
-        let modes = chromeButtonModes
+        let categories = otherCategories
         let state = MapChromeState(
             title: mapTemplateTitle,
-            leadingTitles: modes.leading.map(\.barButtonTitle),
-            trailingTitles: modes.trailing.map(\.barButtonTitle),
+            trailingTitles: categories.map(\.title),
             isEnabled: !isSearchingPlaces
         )
         guard state != mapChromeState else { return }
         mapChromeState = state
 
         template.title = state.title
-        template.leadingNavigationBarButtons = modes.leading.map { makeModeBarButton(for: $0) }
-        template.trailingNavigationBarButtons = modes.trailing.map { makeModeBarButton(for: $0) }
+        // パン操作中の「完了」など、CarPlay標準の地図UIを優先して見せるため先頭側は空けておく。
+        template.leadingNavigationBarButtons = []
+        template.trailingNavigationBarButtons = categories.map { makeCategoryBarButton(for: $0) }
     }
 
     private var mapTemplateTitle: String {
         if isSearchingPlaces, let searchingCategory {
             return "\(searchingCategory.title)を検索中…"
         }
-        guard let category = mapMode.searchCategory else { return "地図" }
-        return category.title
+        return placeCategory.title
     }
 
     private func makePointOfInterestContent() -> (points: [CPPointOfInterest], selectedIndex: Int) {
-        if let category = mapMode.searchCategory {
-            return makePlacePointOfInterestContent(category: category)
-        }
-
-        let mapPoints = makeMapPoints()
-        let points = mapPoints.map { point in
-            makePointOfInterest(
-                coordinate: point.coordinate,
-                title: point.title,
-                subtitle: point.subtitle,
-                summary: point.summary,
-                pinKind: point.pinKind
-            )
-        }
-        let selectedIndex = mapPoints.firstIndex { $0.isCurrent } ?? NSNotFound
-        return (points, selectedIndex)
+        makePlacePointOfInterestContent(category: placeCategory)
     }
 
     private func makePlacePointOfInterestContent(
@@ -488,8 +409,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             detailSubtitle: distanceText,
             detailSummary: spot.address,
             // 強調中のピンは、選択されていない状態の画像としても選択時の見た目を渡す。
-            pinImage: makePinImage(for: .place(number: number, category: category), selected: highlighted),
-            selectedPinImage: makePinImage(for: .place(number: number, category: category), selected: true)
+            pinImage: makePinImage(number: number, category: category, selected: highlighted),
+            selectedPinImage: makePinImage(number: number, category: category, selected: true)
         )
         pointOfInterest.primaryButton = CPTextButton(title: "案内", textStyle: .confirm) { [weak self] _ in
             Task { @MainActor in
@@ -501,29 +422,19 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     /// 地図画面を開いたまま、駐車場や給油所の表示に切り替える。
     /// 検索中は今の表示を残したまま、タイトルとボタンだけで状態を伝える。
-    private func showPlaces(mode: MapMode) {
-        guard let category = mode.searchCategory else { return }
+    private func showPlaces(category: PlaceSearchService.Category) {
         searchPlaces(category: category) { [weak self] in
             guard let self, let pointOfInterestTemplate = self.pointOfInterestTemplate else { return }
-            self.mapMode = mode
-            self.rememberPlaceMode(mode)
+            self.placeCategory = category
             self.configurePointOfInterestTemplate(pointOfInterestTemplate)
         }
     }
 
-    /// 情報画面から周辺検索を直接開く。あしあとの地図がまだ無い待機中でも使えるように、
-    /// 検索が終わってから地図(POI)画面を積む。
-    private func openPlacesTemplate(mode: MapMode) {
-        guard let category = mode.searchCategory else { return }
+    /// 情報画面から周辺検索を開く。空の画面を見せないよう、検索が終わってから積む。
+    private func openPlacesTemplate(category: PlaceSearchService.Category) {
         searchPlaces(category: category) { [weak self] in
-            self?.openMapTemplate(mode: mode)
+            self?.openMapTemplate(category: category)
         }
-    }
-
-    /// 次に「周辺」で開くカテゴリを覚える。CarPlayを繋ぎ直すまでの間だけ保つ。
-    private func rememberPlaceMode(_ mode: MapMode) {
-        guard mode.searchCategory != nil else { return }
-        lastPlaceMode = mode
     }
 
     /// 現在地を取り直してから周辺を検索する。見つかったときだけ completion を呼ぶ。
@@ -602,7 +513,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     /// 地図をパンされたときの再検索。見ている場所が変わったぶんだけPOIを差し替える。
     private func handleMapRegionChange(_ region: MKCoordinateRegion) {
-        guard mapMode.searchCategory != nil, !isSearchingPlaces else { return }
+        guard !isSearchingPlaces else { return }
         // 自分でPOIを入れ替えた直後のカメラ移動は、ユーザーのパンではないので無視する。
         if let ignoresMapRegionChangesUntil, Date() < ignoresMapRegionChangesUntil { return }
         let center = region.center
@@ -644,15 +555,16 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     private func runPendingRegionSearch() {
         regionSearchTimer = nil
-        guard let category = mapMode.searchCategory, let center = pendingRegionCenter else { return }
+        guard let center = pendingRegionCenter else { return }
         pendingRegionCenter = nil
         // 待っている間に地図画面が閉じられていたら、見えないPOIを作り直すだけなのでやめる。
         guard let pointOfInterestTemplate,
               interfaceController?.topTemplate === pointOfInterestTemplate else { return }
 
+        let category = placeCategory
         searchPlaces(category: category, around: center, silently: true) { [weak self] in
             guard let self,
-                  self.mapMode.searchCategory == category,
+                  self.placeCategory == category,
                   let pointOfInterestTemplate = self.pointOfInterestTemplate else { return }
             // 番号は付け直しになるが、選択も強調も付けないのでユーザーが見ている場所は動かない。
             self.configurePointOfInterestTemplate(pointOfInterestTemplate)
@@ -675,7 +587,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         on template: CPPointOfInterestTemplate,
         for pointOfInterest: CPPointOfInterest
     ) {
-        guard mapMode.searchCategory != nil else { return }
         if let lastSelectionReapplyDate, Date().timeIntervalSince(lastSelectionReapplyDate) < 1 { return }
         guard let index = template.pointsOfInterest.firstIndex(where: { $0 === pointOfInterest }),
               index != highlightedPlaceIndex else { return }
@@ -685,13 +596,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         // ここからはユーザーが選んだ状態。詳細カードを開いたままにするため選択も渡す。
         isPlaceSelected = true
         configurePointOfInterestTemplate(template)
-    }
-
-    private func showFootprints() {
-        cancelRegionSearch()
-        mapMode = .footprints
-        guard let pointOfInterestTemplate else { return }
-        configurePointOfInterestTemplate(pointOfInterestTemplate)
     }
 
     /// 検索に失敗したときの後始末。表示は元に戻してから理由を伝える。
@@ -744,128 +648,23 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         return components.url
     }
 
-    private func makeMapPoints() -> [MapPoint] {
-        if let route = locationManager.currentRoute {
-            let sortedPoints = route.points.sorted { $0.timestamp < $1.timestamp }
-            guard let first = sortedPoints.first else { return [] }
-
-            guard sortedPoints.count >= 2, let latest = sortedPoints.last else {
-                return [
-                    MapPoint(
-                        coordinate: coordinate(for: first),
-                        title: "現在地",
-                        subtitle: stateText,
-                        summary: nil,
-                        isCurrent: true,
-                        pinKind: .current
-                    )
-                ]
-            }
-
-            let start = MapPoint(
-                coordinate: coordinate(for: first),
-                title: "出発地点",
-                subtitle: formatTime(route.startDate),
-                summary: nil,
-                isCurrent: false,
-                pinKind: .start
-            )
-            let current = MapPoint(
-                coordinate: coordinate(for: latest),
-                title: "現在地",
-                subtitle: stateText,
-                summary: nil,
-                isCurrent: true,
-                pinKind: .current
-            )
-
-            if isSameCoordinate(start.coordinate, current.coordinate) {
-                return [current]
-            }
-            // 途中の経由地点は出さない。POIテンプレートは「選んで次の行動に移る地点」を
-            // 出す画面なので、運転中に意味のある「今どこ・どこから来たか」だけに絞る。
-            return [start, current]
-        }
-
-        if let latest = locationManager.currentCoordinates.last {
-            return [
-                MapPoint(
-                    coordinate: latest,
-                    title: "現在地",
-                    subtitle: nil,
-                    summary: nil,
-                    isCurrent: true,
-                    pinKind: .current
-                )
-            ]
-        }
-
-        return []
-    }
-
-    private func isSameCoordinate(_ lhs: CLLocationCoordinate2D, _ rhs: CLLocationCoordinate2D) -> Bool {
-        abs(lhs.latitude - rhs.latitude) < 0.000001 && abs(lhs.longitude - rhs.longitude) < 0.000001
-    }
-
-    private func coordinate(for point: LocationPoint) -> CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude)
-    }
-
-    private func makePointOfInterest(
-        coordinate: CLLocationCoordinate2D,
-        title: String,
-        subtitle: String?,
-        summary: String?,
-        pinKind: MapPinKind
-    ) -> CPPointOfInterest {
-        // iOS 26でMKPlacemark経由の初期化は非推奨。住所は使わないので座標だけ渡す。
-        let mapItem = MKMapItem(
-            location: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude),
-            address: nil
-        )
-        return CPPointOfInterest(
-            location: mapItem,
-            title: title,
-            subtitle: subtitle,
-            summary: summary,
-            detailTitle: title,
-            detailSubtitle: subtitle,
-            detailSummary: summary,
-            pinImage: makePinImage(for: pinKind, selected: false),
-            selectedPinImage: makePinImage(for: pinKind, selected: true)
-        )
-    }
-
-    private func makePinImage(for pinKind: MapPinKind, selected: Bool) -> UIImage? {
+    private func makePinImage(
+        number: Int,
+        category: PlaceSearchService.Category,
+        selected: Bool
+    ) -> UIImage {
         let key = PinImageKey(
-            pinKind: pinKind,
+            number: number,
+            category: category,
             selected: selected,
             userInterfaceStyle: interfaceController?.carTraitCollection.userInterfaceStyle ?? .unspecified
         )
         if let cached = pinImageCache[key] {
             return cached
         }
-        let image = drawPinImage(for: pinKind, selected: selected)
-        if let image {
-            pinImageCache[key] = image
-        }
+        let image = makePlacePinImage(number: number, category: category, selected: selected)
+        pinImageCache[key] = image
         return image
-    }
-
-    private func drawPinImage(for pinKind: MapPinKind, selected: Bool) -> UIImage? {
-        switch pinKind {
-        case .start:
-            return nil
-        case .current:
-            return makeDotPinImage(
-                fillColor: .systemBlue,
-                diameterRatio: selected ? 0.62 : 0.52,
-                hasHalo: selected,
-                selected: selected
-            )
-        case .place(let number, let category):
-            return makePlacePinImage(number: number, category: category, selected: selected)
-        }
     }
 
     /// 駐車場・給油所のピン。昼夜どちらの地図でも沈まないよう、白縁付きの塗りに白の数字を載せる。
@@ -936,47 +735,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
     }
 
-    private func makeDotPinImage(
-        fillColor: UIColor,
-        diameterRatio: CGFloat,
-        hasHalo: Bool,
-        selected: Bool
-    ) -> UIImage {
-        let size = selected ? CPPointOfInterest.selectedPinImageSize : CPPointOfInterest.pinImageSize
-        let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { _ in
-            let diameter = min(size.width, size.height) * diameterRatio
-            let circleRect = CGRect(
-                x: (size.width - diameter) / 2,
-                y: (size.height - diameter) / 2,
-                width: diameter,
-                height: diameter
-            )
-
-            if hasHalo {
-                fillColor.withAlphaComponent(0.22).setFill()
-                let haloDiameter = min(size.width, size.height) * 0.9
-                let haloRect = CGRect(
-                    x: (size.width - haloDiameter) / 2,
-                    y: (size.height - haloDiameter) / 2,
-                    width: haloDiameter,
-                    height: haloDiameter
-                )
-                UIBezierPath(ovalIn: haloRect).fill()
-            }
-
-            fillColor.setFill()
-            UIBezierPath(ovalIn: circleRect).fill()
-
-            UIColor.white.setStroke()
-            let lineWidth = max(2, diameter * 0.1)
-            let strokeRect = circleRect.insetBy(dx: lineWidth / 2, dy: lineWidth / 2)
-            let path = UIBezierPath(ovalIn: strokeRect)
-            path.lineWidth = lineWidth
-            path.stroke()
-        }
-    }
-
     private func makeInformationTemplate() -> CPInformationTemplate {
         CPInformationTemplate(
             title: "今日のあしあと",
@@ -1009,10 +767,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func makeInformationActionConfiguration() -> InformationActionConfiguration {
-        InformationActionConfiguration(
-            recordingState: locationManager.recordingState,
-            hasMapContent: hasMapContent
-        )
+        InformationActionConfiguration(recordingState: locationManager.recordingState)
     }
 
     private func makeActions() -> [CPTextButton] {
@@ -1031,7 +786,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 makePlacesTextButton(),
             ]
         case .recording:
-            var actions = [
+            return [
                 CPTextButton(title: "一時停止", textStyle: .normal) { [weak self] _ in
                     Task { @MainActor in
                         self?.locationManager.pauseRecording()
@@ -1043,13 +798,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                         self?.confirmStopRecordingFromCarPlay()
                     }
                 },
+                makePlacesTextButton(),
             ]
-            if configuration.hasMapContent {
-                actions.append(makeMapTextButton())
-            }
-            return actions
         case .paused:
-            var actions = [
+            return [
                 CPTextButton(title: "再開", textStyle: .confirm) { [weak self] _ in
                     Task { @MainActor in
                         self?.locationManager.resumeRecording()
@@ -1061,40 +813,22 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                         self?.confirmStopRecordingFromCarPlay()
                     }
                 },
+                makePlacesTextButton(),
             ]
-            if configuration.hasMapContent {
-                actions.append(makeMapTextButton())
-            }
-            return actions
         }
     }
 
-    /// 周辺検索への入口。下部ボタンは上限3個で、記録中は「一時停止・到着・地図」で
-    /// 埋まってしまうため、待機中だけ置く。
+    /// 周辺検索への入口。待機中も記録中も同じ位置に置く（下部ボタンはどの状態でも3個以内）。
     /// カテゴリを選ばせるアクションシートは、狭い画面(800x480)だとタイトル＋4ボタンが
-    /// 収まらずキャンセルが切れてしまったので使わない。前回見たカテゴリを直接開き、
-    /// 切り替えは地図画面のナビバーの順送りに任せる（戻るのはシステムの戻るボタン）。
+    /// 収まらずキャンセルが切れてしまったので使わない。前回見ていたカテゴリを直接開き、
+    /// 切り替えは地図画面のナビバーに任せる（戻るのはシステムの戻るボタン）。
     private func makePlacesTextButton() -> CPTextButton {
         CPTextButton(title: "周辺", textStyle: .normal) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                self.openPlacesTemplate(mode: self.lastPlaceMode)
+                self.openPlacesTemplate(category: self.placeCategory)
             }
         }
-    }
-
-    private func makeMapTextButton() -> CPTextButton {
-        CPTextButton(title: "地図", textStyle: .normal) { [weak self] _ in
-            Task { @MainActor in
-                self?.openMapTemplate(mode: .footprints)
-            }
-        }
-    }
-
-    /// 地図に出せるものがあるか。毎秒のボタン更新から呼ばれるので、
-    /// makeMapPoints() のような点数に比例する処理はここでは使わない。
-    private var hasMapContent: Bool {
-        !locationManager.currentCoordinates.isEmpty
     }
 
     private func startRecordingFromCarPlay() {

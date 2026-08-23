@@ -16,7 +16,7 @@ import UIKit
 @MainActor
 final class PlaceSearchService {
     /// 探す対象。ピンの色や画面の文言もここから決める。
-    enum Category {
+    enum Category: CaseIterable {
         case parking
         case fuel
         case evCharger
