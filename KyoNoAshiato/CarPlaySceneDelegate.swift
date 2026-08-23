@@ -25,6 +25,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var isSearchingPlaces = false
     /// 検索中のカテゴリ。タイトルに「駐車場を検索中…」と出すために持つ。
     private var searchingCategory: PlaceSearchService.Category?
+    /// 情報画面の「周辺」で開くモード。前回見ていたカテゴリを覚えておく。
+    private var lastPlaceMode: MapMode = .parking
     private let placeSearches: [PlaceSearchService.Category: PlaceSearchService] = [
         .parking: PlaceSearchService(category: .parking),
         .fuel: PlaceSearchService(category: .fuel),
@@ -79,10 +81,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// 地図画面のナビバーの見た目。同じならCarPlayに入れ直さない。
     private struct MapChromeState: Equatable {
         let title: String
-        /// 場所モードを行き来するボタンの文言。
-        let placeToggleTitle: String
-        /// あしあとへ戻るボタンの文言。nil はボタンを出さない状態。
-        let footprintsToggleTitle: String?
+        let leadingTitles: [String]
+        let trailingTitles: [String]
         let isEnabled: Bool
     }
 
@@ -109,17 +109,14 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             }
         }
 
-        /// ナビバーのボタンで送る次のモード。場所モードを順に回し、
-        /// あしあとへ戻るのは別ボタンに持たせる。
-        var nextPlaceMode: MapMode {
-            switch self {
-            case .footprints: return .parking
-            case .parking: return .fuel
-            case .fuel: return .evCharging
-            case .evCharging: return .parking
-            }
+        /// ナビバーのボタンに出す文言。
+        var barButtonTitle: String {
+            searchCategory?.title ?? "あしあと"
         }
     }
+
+    /// 場所を探すモードの全部。ナビバーの並びを作るときに使う。
+    private static let placeModes: [MapMode] = [.parking, .fuel, .evCharging]
 
     private enum MapPinKind: Hashable {
         case start
@@ -325,6 +322,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func openMapTemplate(mode: MapMode) {
         guard let interfaceController else { return }
         mapMode = mode
+        rememberPlaceMode(mode)
         let content = makePointOfInterestContent()
         guard !content.points.isEmpty else {
             presentAlert("位置情報を取得中です", shortTitle: "位置情報を取得中")
@@ -378,25 +376,51 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         template.setPointsOfInterest(content.points, selectedIndex: content.selectedIndex)
     }
 
+    /// ナビバーに並べるモード。今いる場所以外のカテゴリを常に出して1タップで行けるようにする。
+    /// leading はシステムの戻るボタンやパン中の「完了」が出る場所なので、
+    /// 記録中に「あしあと」を置くとき以外は空けておく。
+    private var chromeButtonModes: (leading: [MapMode], trailing: [MapMode]) {
+        guard let category = mapMode.searchCategory else {
+            // あしあと表示中は周辺への入口を1つだけ。前回見ていたカテゴリへ送る。
+            return ([], [lastPlaceMode])
+        }
+        let others = Self.placeModes.filter { $0.searchCategory != category }
+        let showsFootprints = locationManager.recordingState != .idle && hasMapContent
+        return (showsFootprints ? [.footprints] : [], others)
+    }
+
+    private func makeModeBarButton(for mode: MapMode) -> CPBarButton {
+        let button = CPBarButton(title: mode.barButtonTitle) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if mode.searchCategory == nil {
+                    self.showFootprints()
+                } else {
+                    self.showPlaces(mode: mode)
+                }
+            }
+        }
+        button.isEnabled = !isSearchingPlaces
+        return button
+    }
+
     /// タイトルとナビバーのボタンだけを最新化する。POIの差し替えを伴わないので検索中の表示更新に使う。
     private func updateMapTemplateChrome(_ template: CPPointOfInterestTemplate) {
         // 位置更新のたびにここを通るので、内容が同じときは触らない。
         // ナビバーを入れ直すとCarPlay側が地図の状態（選択中のピンなど）を作り直してしまう。
+        let modes = chromeButtonModes
         let state = MapChromeState(
             title: mapTemplateTitle,
-            placeToggleTitle: mapMode.nextPlaceMode.searchCategory?.title ?? "",
-            footprintsToggleTitle: footprintsBarButtonTitle,
+            leadingTitles: modes.leading.map(\.barButtonTitle),
+            trailingTitles: modes.trailing.map(\.barButtonTitle),
             isEnabled: !isSearchingPlaces
         )
         guard state != mapChromeState else { return }
         mapChromeState = state
 
         template.title = state.title
-        // パン操作中の「完了」など、CarPlay標準の地図UIを優先して見せるため先頭側は空けておく。
-        template.leadingNavigationBarButtons = []
-        // ナビバーは2個まで。左に場所の切り替え、右にあしあとへ戻るボタンを置く。
-        template.trailingNavigationBarButtons = [makePlaceModeBarButton(), makeFootprintsBarButton()]
-            .compactMap { $0 }
+        template.leadingNavigationBarButtons = modes.leading.map { makeModeBarButton(for: $0) }
+        template.trailingNavigationBarButtons = modes.trailing.map { makeModeBarButton(for: $0) }
     }
 
     private var mapTemplateTitle: String {
@@ -405,40 +429,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
         guard let category = mapMode.searchCategory else { return "地図" }
         return category.title
-    }
-
-    /// あしあと・駐車場・給油を同じテンプレート内で切り替える。
-    /// driving taskアプリの階層上限(ルート込み2枚)に収めるため、画面を積まずに内容を差し替える。
-    /// あしあとは記録中(一時停止含む)だけなので、見せるものが無いときはボタンを出さない。
-    private var footprintsBarButtonTitle: String? {
-        guard mapMode.searchCategory != nil else { return nil }
-        guard locationManager.recordingState != .idle, hasMapContent else { return nil }
-        return "あしあと"
-    }
-
-    /// 駐車場 → 給油 → EV充電 → 駐車場 と順に送るボタン。
-    /// あしあと表示中は駐車場へ入る入口になる。文言は「次にどこへ行くか」を出す。
-    private func makePlaceModeBarButton() -> CPBarButton? {
-        let target = mapMode.nextPlaceMode
-        guard let title = target.searchCategory?.title else { return nil }
-        let button = CPBarButton(title: title) { [weak self] _ in
-            Task { @MainActor in
-                self?.showPlaces(mode: target)
-            }
-        }
-        button.isEnabled = !isSearchingPlaces
-        return button
-    }
-
-    private func makeFootprintsBarButton() -> CPBarButton? {
-        guard footprintsBarButtonTitle != nil else { return nil }
-        let button = CPBarButton(title: "あしあと") { [weak self] _ in
-            Task { @MainActor in
-                self?.showFootprints()
-            }
-        }
-        button.isEnabled = !isSearchingPlaces
-        return button
     }
 
     private func makePointOfInterestContent() -> (points: [CPPointOfInterest], selectedIndex: Int) {
@@ -516,6 +506,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         searchPlaces(category: category) { [weak self] in
             guard let self, let pointOfInterestTemplate = self.pointOfInterestTemplate else { return }
             self.mapMode = mode
+            self.rememberPlaceMode(mode)
             self.configurePointOfInterestTemplate(pointOfInterestTemplate)
         }
     }
@@ -527,6 +518,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         searchPlaces(category: category) { [weak self] in
             self?.openMapTemplate(mode: mode)
         }
+    }
+
+    /// 次に「周辺」で開くカテゴリを覚える。CarPlayを繋ぎ直すまでの間だけ保つ。
+    private func rememberPlaceMode(_ mode: MapMode) {
+        guard mode.searchCategory != nil else { return }
+        lastPlaceMode = mode
     }
 
     /// 現在地を取り直してから周辺を検索する。見つかったときだけ completion を呼ぶ。
@@ -1073,40 +1070,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     /// 周辺検索への入口。下部ボタンは上限3個で、記録中は「一時停止・到着・地図」で
-    /// 埋まってしまうため、待機中だけ置く。3カテゴリはアクションシートで選ばせる
-    /// （ボタンを3つ並べると上限を超えるうえ、狭い画面では描画されなくなる）。
+    /// 埋まってしまうため、待機中だけ置く。
+    /// カテゴリを選ばせるアクションシートは、狭い画面(800x480)だとタイトル＋4ボタンが
+    /// 収まらずキャンセルが切れてしまったので使わない。前回見たカテゴリを直接開き、
+    /// 切り替えは地図画面のナビバーの順送りに任せる（戻るのはシステムの戻るボタン）。
     private func makePlacesTextButton() -> CPTextButton {
         CPTextButton(title: "周辺", textStyle: .normal) { [weak self] _ in
             Task { @MainActor in
-                self?.presentPlaceCategorySheet()
-            }
-        }
-    }
-
-    /// 駐車場・給油・EV充電のどれを探すか選ばせる。モーダルなので画面階層は増えない。
-    private func presentPlaceCategorySheet() {
-        guard let interfaceController else { return }
-        let modes: [MapMode] = [.parking, .fuel, .evCharging]
-        var actions = modes.compactMap { mode -> CPAlertAction? in
-            guard let title = mode.searchCategory?.title else { return nil }
-            return CPAlertAction(title: title, style: .default) { [weak self] _ in
-                Task { @MainActor in
-                    self?.dismissPresentedTemplate {
-                        self?.openPlacesTemplate(mode: mode)
-                    }
-                }
-            }
-        }
-        actions.append(CPAlertAction(title: "キャンセル", style: .cancel) { [weak self] _ in
-            Task { @MainActor in
-                self?.dismissPresentedTemplate()
-            }
-        })
-
-        let sheet = CPActionSheetTemplate(title: "周辺を探す", message: nil, actions: actions)
-        interfaceController.presentTemplate(sheet, animated: true) { success, error in
-            if !success, let error {
-                print("CarPlay place sheet error: \(error.localizedDescription)")
+                guard let self else { return }
+                self.openPlacesTemplate(mode: self.lastPlaceMode)
             }
         }
     }
