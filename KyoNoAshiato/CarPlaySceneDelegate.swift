@@ -28,6 +28,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private let placeSearches: [PlaceSearchService.Category: PlaceSearchService] = [
         .parking: PlaceSearchService(category: .parking),
         .fuel: PlaceSearchService(category: .fuel),
+        .evCharger: PlaceSearchService(category: .evCharger),
     ]
     private let locationManager = LocationManager.shared
     /// 地図をパンしたときの再検索用。パン中は何度も通知が来るので、少し待ってから1回だけ探す。
@@ -96,6 +97,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         case footprints
         case parking
         case fuel
+        case evCharging
 
         /// 場所を探すモードなら対応するカテゴリ。あしあとは nil。
         var searchCategory: PlaceSearchService.Category? {
@@ -103,14 +105,18 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             case .footprints: return nil
             case .parking: return .parking
             case .fuel: return .fuel
+            case .evCharging: return .evCharger
             }
         }
 
-        /// 切り替え先。場所モードの間を行き来し、あしあとは別ボタンで戻る。
-        var otherPlaceMode: MapMode {
+        /// ナビバーのボタンで送る次のモード。場所モードを順に回し、
+        /// あしあとへ戻るのは別ボタンに持たせる。
+        var nextPlaceMode: MapMode {
             switch self {
-            case .footprints, .fuel: return .parking
+            case .footprints: return .parking
             case .parking: return .fuel
+            case .fuel: return .evCharging
+            case .evCharging: return .parking
             }
         }
     }
@@ -380,7 +386,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         // ナビバーを入れ直すとCarPlay側が地図の状態（選択中のピンなど）を作り直してしまう。
         let state = MapChromeState(
             title: mapTemplateTitle,
-            placeToggleTitle: mapMode.otherPlaceMode.searchCategory?.title ?? "",
+            placeToggleTitle: mapMode.nextPlaceMode.searchCategory?.title ?? "",
             footprintsToggleTitle: footprintsBarButtonTitle,
             isEnabled: !isSearchingPlaces
         )
@@ -414,9 +420,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         return "あしあと"
     }
 
-    /// 駐車場 ⇄ 給油 を行き来するボタン。あしあと表示中は駐車場へ入る入口になる。
+    /// 駐車場 → 給油 → EV充電 → 駐車場 と順に送るボタン。
+    /// あしあと表示中は駐車場へ入る入口になる。文言は「次にどこへ行くか」を出す。
     private func makePlaceModeBarButton() -> CPBarButton? {
-        let target = mapMode.otherPlaceMode
+        let target = mapMode.nextPlaceMode
         guard let title = target.searchCategory?.title else { return nil }
         let button = CPBarButton(title: title) { [weak self] _ in
             Task { @MainActor in

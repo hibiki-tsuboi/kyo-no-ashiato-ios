@@ -19,11 +19,13 @@ final class PlaceSearchService {
     enum Category {
         case parking
         case fuel
+        case evCharger
 
         var pointOfInterestCategory: MKPointOfInterestCategory {
             switch self {
             case .parking: return .parking
             case .fuel: return .gasStation
+            case .evCharger: return .evCharger
             }
         }
 
@@ -32,6 +34,7 @@ final class PlaceSearchService {
             switch self {
             case .parking: return "駐車場"
             case .fuel: return "給油"
+            case .evCharger: return "EV充電"
             }
         }
 
@@ -40,6 +43,7 @@ final class PlaceSearchService {
             switch self {
             case .parking: return "駐車場"
             case .fuel: return "給油所"
+            case .evCharger: return "EV充電スタンド"
             }
         }
 
@@ -48,6 +52,7 @@ final class PlaceSearchService {
             switch self {
             case .parking: return .systemIndigo
             case .fuel: return .systemTeal
+            case .evCharger: return .systemGreen
             }
         }
     }
