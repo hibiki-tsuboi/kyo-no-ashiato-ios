@@ -1,5 +1,5 @@
 //
-//  ParkingSearchService.swift
+//  PlaceSearchService.swift
 //  KyoNoAshiato
 //
 //  Created by Claude on 2026/08/18.
@@ -7,12 +7,56 @@
 
 import CoreLocation
 import MapKit
+import UIKit
 
-/// CarPlayの駐車場検索。指定した地点の周辺の駐車場をMapKitから探す。
+/// CarPlayの周辺検索。指定した地点の周りから、駐車場や給油所をMapKitで探す。
 /// driving taskアプリのガイドラインではPOIの更新は60秒に1回までなので、
 /// 同じあたりを立て続けに探したときはネットワーク検索をせずキャッシュを返す。
+/// カテゴリごとに別インスタンスを持たせる前提で、キャッシュもインスタンス単位。
 @MainActor
-final class ParkingSearchService {
+final class PlaceSearchService {
+    /// 探す対象。ピンの色や画面の文言もここから決める。
+    enum Category {
+        case parking
+        case fuel
+
+        var pointOfInterestCategory: MKPointOfInterestCategory {
+            switch self {
+            case .parking: return .parking
+            case .fuel: return .gasStation
+            }
+        }
+
+        /// 画面のタイトルやボタンに出す短い名前。
+        var title: String {
+            switch self {
+            case .parking: return "駐車場"
+            case .fuel: return "給油"
+            }
+        }
+
+        /// 文の中に出す名前。「近くに〜が見つかりませんでした」など。
+        var name: String {
+            switch self {
+            case .parking: return "駐車場"
+            case .fuel: return "給油所"
+            }
+        }
+
+        /// ピンの地色。選択中はオレンジになるので、それと衝突しない色にする。
+        var pinColor: UIColor {
+            switch self {
+            case .parking: return .systemIndigo
+            case .fuel: return .systemTeal
+            }
+        }
+    }
+
+    let category: Category
+
+    init(category: Category) {
+        self.category = category
+    }
     struct Spot {
         let mapItem: MKMapItem
         let name: String
@@ -37,6 +81,7 @@ final class ParkingSearchService {
     }
 
     /// テンプレートの上限は12個だが、番号を1桁に収めて運転中でも読めるように9件までにする。
+    /// 番号方式は駐車場でも給油所でも同じ。
     /// ガイドラインも「most relevant or nearby」に絞ることを勧めている。
     static let maxSpotCount = 9
 
@@ -93,7 +138,7 @@ final class ParkingSearchService {
         completion: @escaping (Result<[Spot], Error>) -> Void
     ) {
         let request = MKLocalPointsOfInterestRequest(center: center, radius: radius)
-        request.pointOfInterestFilter = MKPointOfInterestFilter(including: [.parking])
+        request.pointOfInterestFilter = MKPointOfInterestFilter(including: [category.pointOfInterestCategory])
 
         search?.cancel()
         let search = MKLocalSearch(request: request)
@@ -108,7 +153,7 @@ final class ParkingSearchService {
                 return
             }
 
-            let found = Self.makeSpots(
+            let found = self.makeSpots(
                 from: response?.mapItems ?? [],
                 around: center,
                 measuringFrom: origin
@@ -133,17 +178,19 @@ final class ParkingSearchService {
         return spots.map { $0.measured(from: originLocation) }
     }
 
-    private static func makeSpots(
+    private func makeSpots(
         from mapItems: [MKMapItem],
         around center: CLLocationCoordinate2D,
         measuringFrom origin: CLLocationCoordinate2D
     ) -> [Spot] {
         let originLocation = CLLocation(latitude: origin.latitude, longitude: origin.longitude)
         let centerLocation = CLLocation(latitude: center.latitude, longitude: center.longitude)
-        let spots = mapItems.map { mapItem in
-            Spot(
+        let spots = mapItems.map { mapItem -> Spot in
+            // 名前が無い施設もあるので、そのときはカテゴリ名で埋める。
+            let name = mapItem.name.flatMap { $0.isEmpty ? nil : $0 } ?? category.name
+            return Spot(
                 mapItem: mapItem,
-                name: mapItem.name ?? "駐車場",
+                name: name,
                 address: mapItem.address?.shortAddress ?? mapItem.address?.fullAddress,
                 coordinate: mapItem.location.coordinate,
                 distance: 0
@@ -154,7 +201,7 @@ final class ParkingSearchService {
         return Array(
             spots
                 .sorted { centerLocation.distance(from: $0.location) < centerLocation.distance(from: $1.location) }
-                .prefix(maxSpotCount)
+                .prefix(Self.maxSpotCount)
         )
     }
 

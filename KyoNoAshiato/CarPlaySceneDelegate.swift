@@ -22,14 +22,19 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var pinImageCache: [PinImageKey: UIImage] = [:]
     private weak var templateApplicationScene: CPTemplateApplicationScene?
     private var mapMode: MapMode = .footprints
-    private var isSearchingParking = false
-    private let parkingSearch = ParkingSearchService()
+    private var isSearchingPlaces = false
+    /// 検索中のカテゴリ。タイトルに「駐車場を検索中…」と出すために持つ。
+    private var searchingCategory: PlaceSearchService.Category?
+    private let placeSearches: [PlaceSearchService.Category: PlaceSearchService] = [
+        .parking: PlaceSearchService(category: .parking),
+        .fuel: PlaceSearchService(category: .fuel),
+    ]
     private let locationManager = LocationManager.shared
     /// 地図をパンしたときの再検索用。パン中は何度も通知が来るので、少し待ってから1回だけ探す。
-    private var parkingRegionSearchTimer: Timer?
-    private var pendingParkingRegionCenter: CLLocationCoordinate2D?
+    private var regionSearchTimer: Timer?
+    private var pendingRegionCenter: CLLocationCoordinate2D?
     /// 最後に駐車場を探した中心。ここからあまり動いていないパンでは探し直さない。
-    private var lastParkingSearchCenter: CLLocationCoordinate2D?
+    private var lastPlaceSearchCenter: CLLocationCoordinate2D?
     /// 最後にPOIを差し替えた時刻。POIの定期更新を60秒に1回までに抑えるために見る。
     private var lastPointOfInterestUpdateDate: Date?
     /// 最後に情報項目を差し替えた時刻。データの定期更新を10秒に1回までに抑えるために見る。
@@ -40,23 +45,23 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var lastSelectionReapplyDate: Date?
     /// リストで実際に選ばれたかどうか。開いた直後はテンプレート側の選択を付けない。
     /// 選択を付けるとリストがその項目まで自動でスクロールし、先頭から始まらないため。
-    private var isParkingSpotSelected = false
+    private var isPlaceSelected = false
     /// 強調表示する駐車場の番号(0始まり)。nil は強調なし。
     /// テンプレートは選択に応じてピン画像を描き分けてくれないので、こちらで持って
     /// 強調したいピンには最初から選択時の画像を渡す。
-    private var highlightedParkingIndex: Int?
+    private var highlightedPlaceIndex: Int?
     /// POIを入れ替えた直後のカメラ移動をパン操作と誤認しないための無視期間。
     private var ignoresMapRegionChangesUntil: Date?
 
     /// パンが止まったと判断するまでの待ち時間。
-    private static let parkingRegionSearchDelay: TimeInterval = 1.5
+    private static let regionSearchDelay: TimeInterval = 1.5
     /// driving taskアプリのガイドラインに合わせた、POI差し替えの最短間隔。
     private static let pointOfInterestUpdateInterval: TimeInterval = 60
     /// 同じガイドラインの、データ項目の定期更新の最短間隔。
     private static let informationUpdateInterval: TimeInterval = 10
     /// これ以上中心が動いたら別の場所を見ているとみなす。検索半径(3km)の一部だけ動いても
     /// 同じ駐車場が並ぶだけなので、無駄な差し替えを避ける。
-    private static let parkingRegionShiftThreshold: CLLocationDistance = 800
+    private static let regionShiftThreshold: CLLocationDistance = 800
     /// POI差し替えに伴うカメラ移動を無視する時間。
     private static let mapRegionSettleDuration: TimeInterval = 2
 
@@ -73,9 +78,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// 地図画面のナビバーの見た目。同じならCarPlayに入れ直さない。
     private struct MapChromeState: Equatable {
         let title: String
-        /// 切り替えボタンの文言。nil はボタンを出さない状態。
-        let toggleTitle: String?
-        let isToggleEnabled: Bool
+        /// 場所モードを行き来するボタンの文言。
+        let placeToggleTitle: String
+        /// あしあとへ戻るボタンの文言。nil はボタンを出さない状態。
+        let footprintsToggleTitle: String?
+        let isEnabled: Bool
     }
 
     private struct PinImageKey: Hashable {
@@ -88,13 +95,31 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private enum MapMode {
         case footprints
         case parking
+        case fuel
+
+        /// 場所を探すモードなら対応するカテゴリ。あしあとは nil。
+        var searchCategory: PlaceSearchService.Category? {
+            switch self {
+            case .footprints: return nil
+            case .parking: return .parking
+            case .fuel: return .fuel
+            }
+        }
+
+        /// 切り替え先。場所モードの間を行き来し、あしあとは別ボタンで戻る。
+        var otherPlaceMode: MapMode {
+            switch self {
+            case .footprints, .fuel: return .parking
+            case .parking: return .fuel
+            }
+        }
     }
 
     private enum MapPinKind: Hashable {
         case start
         case current
         /// 駐車場は詳細カードと対応が取れるよう、距離順の番号をピンに描く。
-        case parking(number: Int)
+        case place(number: Int, category: PlaceSearchService.Category)
     }
 
     private struct MapPoint {
@@ -147,7 +172,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     private func disconnect() {
         stopRefreshTimer()
-        cancelParkingRegionSearch()
+        cancelRegionSearch()
         if let recordingObserver {
             NotificationCenter.default.removeObserver(recordingObserver)
         }
@@ -158,14 +183,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         interfaceController = nil
         templateApplicationScene = nil
         mapMode = .footprints
-        isSearchingParking = false
-        lastParkingSearchCenter = nil
+        isSearchingPlaces = false
+        searchingCategory = nil
+        lastPlaceSearchCenter = nil
         lastPointOfInterestUpdateDate = nil
         lastInformationUpdateDate = nil
         mapChromeState = nil
         lastSelectionReapplyDate = nil
-        highlightedParkingIndex = nil
-        isParkingSpotSelected = false
+        highlightedPlaceIndex = nil
+        isPlaceSelected = false
         ignoresMapRegionChangesUntil = nil
         informationItemContents = nil
         pinImageCache = [:]
@@ -274,6 +300,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         return Date().timeIntervalSince(lastInformationUpdateDate) >= Self.informationUpdateInterval
     }
 
+    /// 今のモードで使う検索サービス。あしあと表示中は無し。
+    private var activeSearch: PlaceSearchService? {
+        mapMode.searchCategory.flatMap { placeSearches[$0] }
+    }
+
+    private var activeSpots: [PlaceSearchService.Spot] {
+        activeSearch?.spots ?? []
+    }
+
     private var allowsPeriodicPointOfInterestUpdate: Bool {
         guard let lastPointOfInterestUpdateDate else { return true }
         return Date().timeIntervalSince(lastPointOfInterestUpdateDate) >= Self.pointOfInterestUpdateInterval
@@ -345,66 +380,67 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         // ナビバーを入れ直すとCarPlay側が地図の状態（選択中のピンなど）を作り直してしまう。
         let state = MapChromeState(
             title: mapTemplateTitle,
-            toggleTitle: mapModeBarButtonTitle,
-            isToggleEnabled: !isSearchingParking
+            placeToggleTitle: mapMode.otherPlaceMode.searchCategory?.title ?? "",
+            footprintsToggleTitle: footprintsBarButtonTitle,
+            isEnabled: !isSearchingPlaces
         )
         guard state != mapChromeState else { return }
         mapChromeState = state
         // TODO: 調査用の一時ログ。
-        print("CarPlay chrome: \(state.title) toggle \(state.toggleTitle ?? "-")")
+        print("CarPlay chrome: \(state.title) place \(state.placeToggleTitle) footprints \(state.footprintsToggleTitle ?? "-")")
 
         template.title = state.title
         // パン操作中の「完了」など、CarPlay標準の地図UIを優先して見せるため先頭側は空けておく。
         template.leadingNavigationBarButtons = []
-        template.trailingNavigationBarButtons = [makeMapModeBarButton()].compactMap { $0 }
+        // ナビバーは2個まで。左に場所の切り替え、右にあしあとへ戻るボタンを置く。
+        template.trailingNavigationBarButtons = [makePlaceModeBarButton(), makeFootprintsBarButton()]
+            .compactMap { $0 }
     }
 
     private var mapTemplateTitle: String {
-        if isSearchingParking {
-            return "駐車場を検索中…"
+        if isSearchingPlaces, let searchingCategory {
+            return "\(searchingCategory.title)を検索中…"
         }
-        switch mapMode {
-        case .footprints:
-            return "地図"
-        case .parking:
-            return "駐車場"
-        }
+        guard let category = mapMode.searchCategory else { return "地図" }
+        return category.title
     }
 
-    /// あしあと表示と駐車場表示を同じテンプレート内で切り替えるボタン。
+    /// あしあと・駐車場・給油を同じテンプレート内で切り替える。
     /// driving taskアプリの階層上限(ルート込み2枚)に収めるため、画面を積まずに内容を差し替える。
-    /// 出発前など、切り替え先に見せるものが無いときはボタン自体を出さない。
-    private var mapModeBarButtonTitle: String? {
-        switch mapMode {
-        case .footprints:
-            return "駐車場"
-        case .parking:
-            // あしあと画面は記録中(一時停止含む)だけ。情報画面の「地図」ボタンと同じ条件に揃える。
-            guard locationManager.recordingState != .idle, hasMapContent else { return nil }
-            return "あしあと"
-        }
+    /// あしあとは記録中(一時停止含む)だけなので、見せるものが無いときはボタンを出さない。
+    private var footprintsBarButtonTitle: String? {
+        guard mapMode.searchCategory != nil else { return nil }
+        guard locationManager.recordingState != .idle, hasMapContent else { return nil }
+        return "あしあと"
     }
 
-    private func makeMapModeBarButton() -> CPBarButton? {
-        guard let title = mapModeBarButtonTitle else { return nil }
+    /// 駐車場 ⇄ 給油 を行き来するボタン。あしあと表示中は駐車場へ入る入口になる。
+    private func makePlaceModeBarButton() -> CPBarButton? {
+        let target = mapMode.otherPlaceMode
+        guard let title = target.searchCategory?.title else { return nil }
         let button = CPBarButton(title: title) { [weak self] _ in
             Task { @MainActor in
-                guard let self else { return }
-                switch self.mapMode {
-                case .footprints:
-                    self.showParkingSpots()
-                case .parking:
-                    self.showFootprints()
-                }
+                self?.showPlaces(mode: target)
             }
         }
-        button.isEnabled = !isSearchingParking
+        button.isEnabled = !isSearchingPlaces
+        return button
+    }
+
+    private func makeFootprintsBarButton() -> CPBarButton? {
+        guard footprintsBarButtonTitle != nil else { return nil }
+        let button = CPBarButton(title: "あしあと") { [weak self] _ in
+            Task { @MainActor in
+                self?.showFootprints()
+            }
+        }
+        button.isEnabled = !isSearchingPlaces
         return button
     }
 
     private func makePointOfInterestContent() -> (points: [CPPointOfInterest], selectedIndex: Int) {
-        if mapMode == .parking {
-            return makeParkingPointOfInterestContent()
+        if let category = mapMode.searchCategory {
+            return makePlacePointOfInterestContent(category: category)
         }
 
         let mapPoints = makeMapPoints()
@@ -421,22 +457,31 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         return (points, selectedIndex)
     }
 
-    private func makeParkingPointOfInterestContent() -> (points: [CPPointOfInterest], selectedIndex: Int) {
-        let highlighted = parkingSearch.spots.isEmpty ? nil : highlightedParkingIndex
-        let points = parkingSearch.spots.enumerated().map { index, spot in
-            makeParkingPointOfInterest(for: spot, number: index + 1, highlighted: index == highlighted)
+    private func makePlacePointOfInterestContent(
+        category: PlaceSearchService.Category
+    ) -> (points: [CPPointOfInterest], selectedIndex: Int) {
+        let spots = activeSpots
+        let highlighted = spots.isEmpty ? nil : highlightedPlaceIndex
+        let points = spots.enumerated().map { index, spot in
+            makePlacePointOfInterest(
+                for: spot,
+                number: index + 1,
+                category: category,
+                highlighted: index == highlighted
+            )
         }
         // ピンの強調とテンプレート側の選択は別物。開いた直後は強調だけ付けて、
         // 選択はユーザーがリストをタップしてから渡す（開いた時点でスクロールさせないため）。
-        let selectedIndex = isParkingSpotSelected ? highlighted : nil
+        let selectedIndex = isPlaceSelected ? highlighted : nil
         return (points, selectedIndex ?? NSNotFound)
     }
 
     /// 番号はピンに描く数字と揃える。同じ番号を見出しにも出すことで、
-    /// Pが複数並んでいてもカードがどのピンの話なのか分かるようにする。
-    private func makeParkingPointOfInterest(
-        for spot: ParkingSearchService.Spot,
+    /// ピンが複数並んでいてもカードがどのピンの話なのか分かるようにする。
+    private func makePlacePointOfInterest(
+        for spot: PlaceSearchService.Spot,
         number: Int,
+        category: PlaceSearchService.Category,
         highlighted: Bool
     ) -> CPPointOfInterest {
         let distanceText = formatDistance(spot.distance)
@@ -450,8 +495,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             detailSubtitle: distanceText,
             detailSummary: spot.address,
             // 強調中のピンは、選択されていない状態の画像としても選択時の見た目を渡す。
-            pinImage: makePinImage(for: .parking(number: number), selected: highlighted),
-            selectedPinImage: makePinImage(for: .parking(number: number), selected: true)
+            pinImage: makePinImage(for: .place(number: number, category: category), selected: highlighted),
+            selectedPinImage: makePinImage(for: .place(number: number, category: category), selected: true)
         )
         pointOfInterest.primaryButton = CPTextButton(title: "案内", textStyle: .confirm) { [weak self] _ in
             Task { @MainActor in
@@ -461,12 +506,13 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         return pointOfInterest
     }
 
-    /// 地図画面を開いたまま駐車場表示に切り替える。
-    /// 検索中はあしあとの表示を残したまま、タイトルとボタンだけで状態を伝える。
-    private func showParkingSpots() {
-        searchParking { [weak self] in
+    /// 地図画面を開いたまま、駐車場や給油所の表示に切り替える。
+    /// 検索中は今の表示を残したまま、タイトルとボタンだけで状態を伝える。
+    private func showPlaces(mode: MapMode) {
+        guard let category = mode.searchCategory else { return }
+        searchPlaces(category: category) { [weak self] in
             guard let self, let pointOfInterestTemplate = self.pointOfInterestTemplate else { return }
-            self.mapMode = .parking
+            self.mapMode = mode
             self.configurePointOfInterestTemplate(pointOfInterestTemplate)
         }
     }
@@ -474,34 +520,36 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// 情報画面から駐車場を直接開く。あしあとの地図がまだ無い待機中でも使えるように、
     /// 検索が終わってから地図(POI)画面を積む。
     private func openParkingTemplate() {
-        searchParking { [weak self] in
+        searchPlaces(category: .parking) { [weak self] in
             self?.openMapTemplate(mode: .parking)
         }
     }
 
-    /// 現在地を取り直してから駐車場を検索する。見つかったときだけ completion を呼ぶ。
+    /// 現在地を取り直してから周辺を検索する。見つかったときだけ completion を呼ぶ。
     /// `center` を渡すとその周辺を探す（地図をパンしたときの再検索用）。距離と番号は
     /// どちらの場合も運転者の現在地から測る。`silently` はパン起因の検索で使い、
     /// 失敗しても運転中にアラートを出さないためのもの。
-    private func searchParking(
+    private func searchPlaces(
+        category: PlaceSearchService.Category,
         around center: CLLocationCoordinate2D? = nil,
         silently: Bool = false,
         completion: @escaping () -> Void
     ) {
-        guard !isSearchingParking else { return }
+        guard !isSearchingPlaces, let search = placeSearches[category] else { return }
         guard locationManager.canRecordLocation else {
             guard !silently else { return }
             // ガイドラインにより、CarPlayの文言でiPhoneの操作を促してはいけない。
             // 状態だけ伝えて、許可の要求は黙って出す（安全なときに気づいてもらう）。
             locationManager.requestPermissionIfNeeded()
             presentAlert(
-                "位置情報が許可されていないため駐車場を検索できません",
+                "位置情報が許可されていないため\(category.name)を検索できません",
                 shortTitle: "位置情報が未許可です"
             )
             return
         }
+        searchingCategory = category
 
-        isSearchingParking = true
+        isSearchingPlaces = true
         if let pointOfInterestTemplate {
             updateMapTemplateChrome(pointOfInterestTemplate)
         }
@@ -511,7 +559,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 guard let self else { return }
                 guard let coordinate else {
                     // 現在地が取れないと距離も番号も出せないので、パン起因なら黙って諦める。
-                    self.failParkingSearch(
+                    self.failPlaceSearch(
                         message: "現在地を取得できませんでした",
                         shortMessage: "現在地が不明です",
                         silently: silently
@@ -519,27 +567,29 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                     return
                 }
                 let searchCenter = center ?? coordinate
-                self.parkingSearch.searchSpots(around: searchCenter, measuringFrom: coordinate) { [weak self] result in
+                search.searchSpots(around: searchCenter, measuringFrom: coordinate) { [weak self] result in
                     guard let self else { return }
                     switch result {
                     case .success(let spots) where spots.isEmpty:
-                        self.failParkingSearch(
-                            message: center == nil ? "近くに駐車場が見つかりませんでした" : "この辺りに駐車場が見つかりませんでした",
-                            shortMessage: "駐車場なし",
+                        let where_ = center == nil ? "近くに" : "この辺りに"
+                        self.failPlaceSearch(
+                            message: "\(where_)\(category.name)が見つかりませんでした",
+                            shortMessage: "\(category.name)なし",
                             silently: silently
                         )
                     case .success:
-                        self.isSearchingParking = false
-                        self.lastParkingSearchCenter = searchCenter
+                        self.isSearchingPlaces = false
+                        self.searchingCategory = nil
+                        self.lastPlaceSearchCenter = searchCenter
                         // 手動で開いたときは最寄りを強調して出す。パンでの探し直しでは、
                         // 見ている場所を動かさないよう強調も付けない。
-                        self.highlightedParkingIndex = silently ? nil : 0
-                        self.isParkingSpotSelected = false
+                        self.highlightedPlaceIndex = silently ? nil : 0
+                        self.isPlaceSelected = false
                         completion()
                     case .failure(let error):
-                        print("CarPlay parking search error: \(error.localizedDescription)")
-                        self.failParkingSearch(
-                            message: "駐車場を検索できませんでした",
+                        print("CarPlay place search error: \(error.localizedDescription)")
+                        self.failPlaceSearch(
+                            message: "\(category.name)を検索できませんでした",
                             shortMessage: "検索できません",
                             silently: silently
                         )
@@ -550,58 +600,58 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     /// 地図をパンされたときの再検索。見ている場所が変わったぶんだけPOIを差し替える。
-    private func handleParkingMapRegionChange(_ region: MKCoordinateRegion) {
-        guard mapMode == .parking, !isSearchingParking else { return }
+    private func handleMapRegionChange(_ region: MKCoordinateRegion) {
+        guard mapMode.searchCategory != nil, !isSearchingPlaces else { return }
         // 自分でPOIを入れ替えた直後のカメラ移動は、ユーザーのパンではないので無視する。
         if let ignoresMapRegionChangesUntil, Date() < ignoresMapRegionChangesUntil { return }
         let center = region.center
-        if let lastParkingSearchCenter,
-           Self.distance(from: lastParkingSearchCenter, to: center) < Self.parkingRegionShiftThreshold {
+        if let lastPlaceSearchCenter,
+           Self.distance(from: lastPlaceSearchCenter, to: center) < Self.regionShiftThreshold {
             return
         }
-        // すでに出している駐車場の近くを見ているだけなら、探し直しても同じ顔ぶれになる。
+        // すでに出している場所の近くを見ているだけなら、探し直しても同じ顔ぶれになる。
         // カードやピンを選んでカメラが寄った場合もここで弾ける。
-        let isNearShownSpot = parkingSearch.spots.contains { spot in
-            Self.distance(from: spot.coordinate, to: center) < Self.parkingRegionShiftThreshold
+        let isNearShownSpot = activeSpots.contains { spot in
+            Self.distance(from: spot.coordinate, to: center) < Self.regionShiftThreshold
         }
         if isNearShownSpot { return }
-        pendingParkingRegionCenter = center
-        scheduleParkingRegionSearch()
+        pendingRegionCenter = center
+        scheduleRegionSearch()
     }
 
     /// パン中は通知が連続で来るので、止まってから探す。前回の差し替えから60秒経つまでは待つ。
-    private func scheduleParkingRegionSearch() {
-        var delay = Self.parkingRegionSearchDelay
+    private func scheduleRegionSearch() {
+        var delay = Self.regionSearchDelay
         if let lastPointOfInterestUpdateDate {
             let elapsed = Date().timeIntervalSince(lastPointOfInterestUpdateDate)
             delay = max(delay, Self.pointOfInterestUpdateInterval - elapsed)
         }
 
-        parkingRegionSearchTimer?.invalidate()
-        parkingRegionSearchTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { _ in
+        regionSearchTimer?.invalidate()
+        regionSearchTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { _ in
             Task { @MainActor [weak self] in
-                self?.runPendingParkingRegionSearch()
+                self?.runPendingRegionSearch()
             }
         }
     }
 
-    private func cancelParkingRegionSearch() {
-        parkingRegionSearchTimer?.invalidate()
-        parkingRegionSearchTimer = nil
-        pendingParkingRegionCenter = nil
+    private func cancelRegionSearch() {
+        regionSearchTimer?.invalidate()
+        regionSearchTimer = nil
+        pendingRegionCenter = nil
     }
 
-    private func runPendingParkingRegionSearch() {
-        parkingRegionSearchTimer = nil
-        guard mapMode == .parking, let center = pendingParkingRegionCenter else { return }
-        pendingParkingRegionCenter = nil
+    private func runPendingRegionSearch() {
+        regionSearchTimer = nil
+        guard let category = mapMode.searchCategory, let center = pendingRegionCenter else { return }
+        pendingRegionCenter = nil
         // 待っている間に地図画面が閉じられていたら、見えないPOIを作り直すだけなのでやめる。
         guard let pointOfInterestTemplate,
               interfaceController?.topTemplate === pointOfInterestTemplate else { return }
 
-        searchParking(around: center, silently: true) { [weak self] in
+        searchPlaces(category: category, around: center, silently: true) { [weak self] in
             guard let self,
-                  self.mapMode == .parking,
+                  self.mapMode.searchCategory == category,
                   let pointOfInterestTemplate = self.pointOfInterestTemplate else { return }
             // 番号は付け直しになるが、選択も強調も付けないのでユーザーが見ている場所は動かない。
             self.configurePointOfInterestTemplate(pointOfInterestTemplate)
@@ -616,28 +666,28 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             .distance(from: CLLocation(latitude: destination.latitude, longitude: destination.longitude))
     }
 
-    /// リストで選ばれた駐車場のピンを黄色くする。
+    /// リストで選ばれた場所のピンを黄色くする。
     /// selectedIndex を入れ直すだけではピン画像が描き替わらないため、POIを作り直して
     /// 強調したいピンに選択時の画像を持たせる。差し替えがまた didSelect を呼んでも
     /// ループしないよう、1秒間は差し替えない。
-    private func highlightSelectedParkingSpot(
+    private func highlightSelectedPlace(
         on template: CPPointOfInterestTemplate,
         for pointOfInterest: CPPointOfInterest
     ) {
-        guard mapMode == .parking else { return }
+        guard mapMode.searchCategory != nil else { return }
         if let lastSelectionReapplyDate, Date().timeIntervalSince(lastSelectionReapplyDate) < 1 { return }
         guard let index = template.pointsOfInterest.firstIndex(where: { $0 === pointOfInterest }),
-              index != highlightedParkingIndex else { return }
+              index != highlightedPlaceIndex else { return }
 
         lastSelectionReapplyDate = Date()
-        highlightedParkingIndex = index
+        highlightedPlaceIndex = index
         // ここからはユーザーが選んだ状態。詳細カードを開いたままにするため選択も渡す。
-        isParkingSpotSelected = true
+        isPlaceSelected = true
         configurePointOfInterestTemplate(template)
     }
 
     private func showFootprints() {
-        cancelParkingRegionSearch()
+        cancelRegionSearch()
         mapMode = .footprints
         guard let pointOfInterestTemplate else { return }
         configurePointOfInterestTemplate(pointOfInterestTemplate)
@@ -645,8 +695,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     /// 検索に失敗したときの後始末。表示は元に戻してから理由を伝える。
     /// パン起因(`silently`)のときは今見ている一覧を壊さないよう、タイトルとボタンだけ戻す。
-    private func failParkingSearch(message: String, shortMessage: String? = nil, silently: Bool = false) {
-        isSearchingParking = false
+    private func failPlaceSearch(message: String, shortMessage: String? = nil, silently: Bool = false) {
+        isSearchingPlaces = false
+        searchingCategory = nil
         guard !silently else {
             if let pointOfInterestTemplate {
                 updateMapTemplateChrome(pointOfInterestTemplate)
@@ -662,7 +713,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// 選んだ駐車場までの案内を地図アプリに渡す。
     /// 起動はCarPlay画面側で開くようscene経由で行う（CarPlay Developer Guideの推奨手順）。
     /// 駐車場一覧は畳まずに残す。満車で戻ってきたときに別の駐車場をすぐ選び直せるようにするため。
-    private func startNavigation(to spot: ParkingSearchService.Spot) {
+    private func startNavigation(to spot: PlaceSearchService.Spot) {
         guard let url = makeDirectionsURL(for: spot.coordinate) else { return }
         guard let scene = templateApplicationScene else {
             presentAlert("地図アプリを開けませんでした", shortTitle: "地図を開けません")
@@ -811,15 +862,19 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 hasHalo: selected,
                 selected: selected
             )
-        case .parking(let number):
-            return makeParkingPinImage(number: number, selected: selected)
+        case .place(let number, let category):
+            return makePlacePinImage(number: number, category: category, selected: selected)
         }
     }
 
-    /// 駐車場ピン。昼夜どちらの地図でも沈まないよう、白縁付きの塗りに白の数字を載せる。
-    /// 数字は詳細カードの見出しと同じ距離順の番号。選択中のピンだけは色を変えて大きく描き、
-    /// Pが密集していても「いま見ているカードのピンはどれか」が一目で分かるようにする。
-    private func makeParkingPinImage(number: Int, selected: Bool) -> UIImage {
+    /// 駐車場・給油所のピン。昼夜どちらの地図でも沈まないよう、白縁付きの塗りに白の数字を載せる。
+    /// 数字は詳細カードの見出しと同じ番号。カテゴリで地色を変え、選択中だけオレンジで
+    /// 一段大きく描いて「いま見ているカードのピンはどれか」が一目で分かるようにする。
+    private func makePlacePinImage(
+        number: Int,
+        category: PlaceSearchService.Category,
+        selected: Bool
+    ) -> UIImage {
         let size = selected ? CPPointOfInterest.selectedPinImageSize : CPPointOfInterest.pinImageSize
         let renderer = UIGraphicsImageRenderer(size: size)
         return renderer.image { _ in
@@ -847,7 +902,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 UIBezierPath(roundedRect: haloRect, cornerRadius: haloSide * 0.28).fill()
             }
 
-            let fillColor: UIColor = selected ? .systemOrange : .systemIndigo
+            let fillColor: UIColor = selected ? .systemOrange : category.pinColor
             fillColor.setFill()
             UIBezierPath(roundedRect: rect, cornerRadius: cornerRadius).fill()
 
@@ -1200,7 +1255,7 @@ extension CarPlaySceneDelegate: CPPointOfInterestTemplateDelegate {
             region.span.latitudeDelta,
             pointOfInterestTemplate.selectedIndex
         ))
-        handleParkingMapRegionChange(region)
+        handleMapRegionChange(region)
     }
 
     /// 詳細パネルを開いたら、パンで予約していた差し替えは取り下げる。
@@ -1212,7 +1267,7 @@ extension CarPlaySceneDelegate: CPPointOfInterestTemplateDelegate {
         // TODO: 調査用の一時ログ。
         let index = pointOfInterestTemplate.pointsOfInterest.firstIndex { $0 === pointOfInterest }
         print("CarPlay POI selected: tapped \(index.map(String.init) ?? "?") template \(pointOfInterestTemplate.selectedIndex)")
-        cancelParkingRegionSearch()
-        highlightSelectedParkingSpot(on: pointOfInterestTemplate, for: pointOfInterest)
+        cancelRegionSearch()
+        highlightSelectedPlace(on: pointOfInterestTemplate, for: pointOfInterest)
     }
 }
