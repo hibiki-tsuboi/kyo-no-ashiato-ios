@@ -72,7 +72,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let title: String
         /// 切り替えボタンの文言。nil はボタンを出さない状態。
         let toggleTitle: String?
-        let isToggleEnabled: Bool
+        let showsFitAllButton: Bool
+        let isEnabled: Bool
     }
 
     private struct PinImageKey: Hashable {
@@ -331,7 +332,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let state = MapChromeState(
             title: mapTemplateTitle,
             toggleTitle: mapModeBarButtonTitle,
-            isToggleEnabled: !isSearchingParking
+            showsFitAllButton: showsFitAllButton,
+            isEnabled: !isSearchingParking
         )
         guard state != mapChromeState else { return }
         mapChromeState = state
@@ -341,7 +343,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         template.title = state.title
         // パン操作中の「完了」など、CarPlay標準の地図UIを優先して見せるため先頭側は空けておく。
         template.leadingNavigationBarButtons = []
-        template.trailingNavigationBarButtons = [makeMapModeBarButton()].compactMap { $0 }
+        // 「全体表示」を左、モード切り替えを右に置く（切り替えボタンの位置を変えないため）。
+        template.trailingNavigationBarButtons = [makeFitAllBarButton(), makeMapModeBarButton()]
+            .compactMap { $0 }
     }
 
     private var mapTemplateTitle: String {
@@ -368,6 +372,22 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             guard locationManager.recordingState != .idle, hasMapContent else { return nil }
             return "あしあと"
         }
+    }
+
+    /// 駐車場が2件以上あるときだけ「全体表示」を出す。1件以下では引く意味がない。
+    private var showsFitAllButton: Bool {
+        mapMode == .parking && parkingSearch.spots.count > 1
+    }
+
+    private func makeFitAllBarButton() -> CPBarButton? {
+        guard showsFitAllButton else { return nil }
+        let button = CPBarButton(title: "全体表示") { [weak self] _ in
+            Task { @MainActor in
+                self?.showAllParkingSpots()
+            }
+        }
+        button.isEnabled = !isSearchingParking
+        return button
     }
 
     private func makeMapModeBarButton() -> CPBarButton? {
@@ -613,6 +633,17 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         lastSelectionReapplyDate = Date()
         highlightedParkingIndex = index
         configurePointOfInterestTemplate(template)
+    }
+
+    /// すべての駐車場のピンが入るように地図を引く。
+    /// 地図の領域を指定するAPIは無いため、選択も強調も外してPOIを入れ直し、
+    /// テンプレートが最初にPOI全体を収めるように地図を組み直す挙動に委ねる。
+    private func showAllParkingSpots() {
+        guard mapMode == .parking, let pointOfInterestTemplate else { return }
+        highlightedParkingIndex = nil
+        // 入れ直した直後にテンプレートが先頭を選び直しても、強調が戻らないようにする。
+        lastSelectionReapplyDate = Date()
+        configurePointOfInterestTemplate(pointOfInterestTemplate)
     }
 
     private func showFootprints() {
