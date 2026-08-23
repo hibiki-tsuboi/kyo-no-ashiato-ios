@@ -524,11 +524,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
     }
 
-    /// 情報画面から駐車場を直接開く。あしあとの地図がまだ無い待機中でも使えるように、
+    /// 情報画面から周辺検索を直接開く。あしあとの地図がまだ無い待機中でも使えるように、
     /// 検索が終わってから地図(POI)画面を積む。
-    private func openParkingTemplate() {
-        searchPlaces(category: .parking) { [weak self] in
-            self?.openMapTemplate(mode: .parking)
+    private func openPlacesTemplate(mode: MapMode) {
+        guard let category = mode.searchCategory else { return }
+        searchPlaces(category: category) { [weak self] in
+            self?.openMapTemplate(mode: mode)
         }
     }
 
@@ -1034,7 +1035,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                         self?.startRecordingFromCarPlay()
                     }
                 },
-                makeParkingTextButton(),
+                makePlacesTextButton(),
             ]
         case .recording:
             var actions = [
@@ -1075,11 +1076,41 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
     }
 
-    /// 記録中は情報画面のボタンが上限(3個)に達するため、待機中だけ置く駐車場への入口。
-    private func makeParkingTextButton() -> CPTextButton {
-        CPTextButton(title: "駐車場", textStyle: .normal) { [weak self] _ in
+    /// 周辺検索への入口。下部ボタンは上限3個で、記録中は「一時停止・到着・地図」で
+    /// 埋まってしまうため、待機中だけ置く。3カテゴリはアクションシートで選ばせる
+    /// （ボタンを3つ並べると上限を超えるうえ、狭い画面では描画されなくなる）。
+    private func makePlacesTextButton() -> CPTextButton {
+        CPTextButton(title: "周辺", textStyle: .normal) { [weak self] _ in
             Task { @MainActor in
-                self?.openParkingTemplate()
+                self?.presentPlaceCategorySheet()
+            }
+        }
+    }
+
+    /// 駐車場・給油・EV充電のどれを探すか選ばせる。モーダルなので画面階層は増えない。
+    private func presentPlaceCategorySheet() {
+        guard let interfaceController else { return }
+        let modes: [MapMode] = [.parking, .fuel, .evCharging]
+        var actions = modes.compactMap { mode -> CPAlertAction? in
+            guard let title = mode.searchCategory?.title else { return nil }
+            return CPAlertAction(title: title, style: .default) { [weak self] _ in
+                Task { @MainActor in
+                    self?.dismissPresentedTemplate {
+                        self?.openPlacesTemplate(mode: mode)
+                    }
+                }
+            }
+        }
+        actions.append(CPAlertAction(title: "キャンセル", style: .cancel) { [weak self] _ in
+            Task { @MainActor in
+                self?.dismissPresentedTemplate()
+            }
+        })
+
+        let sheet = CPActionSheetTemplate(title: "周辺を探す", message: nil, actions: actions)
+        interfaceController.presentTemplate(sheet, animated: true) { success, error in
+            if !success, let error {
+                print("CarPlay place sheet error: \(error.localizedDescription)")
             }
         }
     }
