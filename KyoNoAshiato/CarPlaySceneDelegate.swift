@@ -375,8 +375,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         lastPointOfInterestUpdateDate = Date()
         // 差し替えに伴うカメラ移動はパン操作として扱わない。
         ignoresMapRegionChangesUntil = Date().addingTimeInterval(Self.mapRegionSettleDuration)
-        // TODO: 調査用の一時ログ。ズームで選択が外れる件の切り分けが済んだら消す。
-        print("CarPlay POI setPoints: mode \(mapMode) count \(content.points.count) selected \(content.selectedIndex)")
         template.setPointsOfInterest(content.points, selectedIndex: content.selectedIndex)
     }
 
@@ -392,8 +390,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         )
         guard state != mapChromeState else { return }
         mapChromeState = state
-        // TODO: 調査用の一時ログ。
-        print("CarPlay chrome: \(state.title) place \(state.placeToggleTitle) footprints \(state.footprintsToggleTitle ?? "-")")
 
         template.title = state.title
         // パン操作中の「完了」など、CarPlay標準の地図UIを優先して見せるため先頭側は空けておく。
@@ -1285,14 +1281,6 @@ extension CarPlaySceneDelegate: CPPointOfInterestTemplateDelegate {
         _ pointOfInterestTemplate: CPPointOfInterestTemplate,
         didChangeMapRegion region: MKCoordinateRegion
     ) {
-        // TODO: 調査用の一時ログ。spanでズームの向きが分かる。
-        print(String(
-            format: "CarPlay region: %.5f, %.5f span %.5f selected %ld",
-            region.center.latitude,
-            region.center.longitude,
-            region.span.latitudeDelta,
-            pointOfInterestTemplate.selectedIndex
-        ))
         handleMapRegionChange(region)
     }
 
@@ -1302,9 +1290,6 @@ extension CarPlaySceneDelegate: CPPointOfInterestTemplateDelegate {
         _ pointOfInterestTemplate: CPPointOfInterestTemplate,
         didSelectPointOfInterest pointOfInterest: CPPointOfInterest
     ) {
-        // TODO: 調査用の一時ログ。
-        let index = pointOfInterestTemplate.pointsOfInterest.firstIndex { $0 === pointOfInterest }
-        print("CarPlay POI selected: tapped \(index.map(String.init) ?? "?") template \(pointOfInterestTemplate.selectedIndex)")
         cancelRegionSearch()
         highlightSelectedPlace(on: pointOfInterestTemplate, for: pointOfInterest)
     }
