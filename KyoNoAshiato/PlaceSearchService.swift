@@ -153,7 +153,8 @@ final class PlaceSearchService {
             guard let self else { return }
             self.search = nil
 
-            if let error {
+            // MapKitは該当施設がない場合にもエラーを返す。0件として範囲拡大や地図表示へ進める。
+            if let error, (error as? MKError)?.code != .placemarkNotFound {
                 completion(.failure(error))
                 return
             }

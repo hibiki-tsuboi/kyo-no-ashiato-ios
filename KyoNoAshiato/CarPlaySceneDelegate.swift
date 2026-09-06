@@ -272,12 +272,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func openMapTemplate(category: PlaceSearchService.Category) {
         guard let interfaceController else { return }
         placeCategory = category
-        let content = makePointOfInterestContent()
-        guard !content.points.isEmpty else {
-            presentAlert("位置情報を取得中です", shortTitle: "位置情報を取得中")
-            return
-        }
 
+        // 検索結果が0件でも開き、ナビバーから別のカテゴリを検索できるようにする。
         // 作り立てのテンプレートは生成時にPOIを受け取っているので入れ直さない。
         // 入れ直すとリストのスクロール位置が中途半端な所から始まってしまう。
         let template: CPPointOfInterestTemplate
@@ -364,6 +360,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         if isSearchingPlaces, let searchingCategory {
             return "\(searchingCategory.title)を検索中…"
         }
+        if activeSpots.isEmpty {
+            return "\(placeCategory.title)：見つかりません"
+        }
         return placeCategory.title
     }
 
@@ -430,14 +429,14 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
     }
 
-    /// 情報画面から周辺検索を開く。空の画面を見せないよう、検索が終わってから積む。
+    /// 情報画面から周辺検索を開く。検索結果が0件でもカテゴリ切り替えを使えるようにする。
     private func openPlacesTemplate(category: PlaceSearchService.Category) {
         searchPlaces(category: category) { [weak self] in
             self?.openMapTemplate(category: category)
         }
     }
 
-    /// 現在地を取り直してから周辺を検索する。見つかったときだけ completion を呼ぶ。
+    /// 現在地を取り直してから周辺を検索する。0件を含め、検索が成功したら completion を呼ぶ。
     /// `center` を渡すとその周辺を探す（地図をパンしたときの再検索用）。距離と番号は
     /// どちらの場合も運転者の現在地から測る。`silently` はパン起因の検索で使い、
     /// 失敗しても運転中にアラートを出さないためのもの。
@@ -482,20 +481,13 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 search.searchSpots(around: searchCenter, measuringFrom: coordinate) { [weak self] result in
                     guard let self else { return }
                     switch result {
-                    case .success(let spots) where spots.isEmpty:
-                        let where_ = center == nil ? "近くに" : "この辺りに"
-                        self.failPlaceSearch(
-                            message: "\(where_)\(category.name)が見つかりませんでした",
-                            shortMessage: "\(category.name)なし",
-                            silently: silently
-                        )
-                    case .success:
+                    case .success(let spots):
                         self.isSearchingPlaces = false
                         self.searchingCategory = nil
                         self.lastPlaceSearchCenter = searchCenter
                         // 手動で開いたときは最寄りを強調して出す。パンでの探し直しでは、
                         // 見ている場所を動かさないよう強調も付けない。
-                        self.highlightedPlaceIndex = silently ? nil : 0
+                        self.highlightedPlaceIndex = silently || spots.isEmpty ? nil : 0
                         self.isPlaceSelected = false
                         completion()
                     case .failure(let error):
